@@ -1,0 +1,6 @@
+{
+  "name": "AndeXCertify",
+  "description": "Sistema profesional para cargar cursos y alumnos, generando certificados y diplomas con validación QR según legislación chilena.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

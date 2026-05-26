@@ -1,0 +1,111 @@
+{
+  "entities": {
+    "Course": {
+      "title": "Course",
+      "description": "Represents a training course with its metadata and SENCE configuration",
+      "type": "object",
+      "properties": {
+        "nameReference": { "type": "string", "description": "Internal reference name" },
+        "nameVisible": { "type": "string", "description": "Name shown on the certificate" },
+        "type": { "type": "string", "enum": ["horizontal", "vertical"], "description": "A4 orientation" },
+        "expirationDate": { "type": "string", "format": "date-time", "description": "Course expiration date" },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Course status" },
+        "isSence": { "type": "boolean", "description": "Whether the course is SENCE-regulated" },
+        "senceData": {
+          "type": "object",
+          "properties": {
+            "empresa": { "type": "string" },
+            "rutEmpresa": { "type": "string" },
+            "nombreCurso": { "type": "string" },
+            "fecInicio": { "type": "string", "format": "date" },
+            "fecTermino": { "type": "string", "format": "date" },
+            "fecVencimiento": { "type": "string", "format": "date" },
+            "horasActividad": { "type": "number" },
+            "fecEmision": { "type": "string", "format": "date" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["nameReference", "nameVisible", "type"]
+    },
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "A student's enrollment in a specific course",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentRut": { "type": "string" },
+        "enrollmentDate": { "type": "string", "format": "date-time" },
+        "evaluation": { "type": "string" },
+        "status": { "type": "string", "enum": ["Aprobado", "Reprobado", "Cursando"] },
+        "attendance": { "type": "number" },
+        "certificateGeneratedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["courseId", "studentName", "studentRut"]
+    },
+    "OrganizationSettings": {
+      "title": "Organization Settings",
+      "description": "Global configuration for the OTEC or training entity",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "rut": { "type": "string" },
+        "lema": { "type": "string" },
+        "useCustomStamp": { "type": "boolean" },
+        "customStampName": { "type": "string" },
+        "logoUrl": { "type": "string", "description": "Data URL or Cloud Storage URL of the organization logo" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Representative": {
+      "title": "Legal Representative",
+      "description": "Information about a legal representative including signature",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "rut": { "type": "string" },
+        "signatureUrl": { "type": "string", "description": "Data URL or Cloud Storage URL of the signature" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "CertificateTemplate": {
+      "title": "Certificate Template",
+      "description": "Word document template for certificates",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["sence", "non-sence"] },
+        "fileData": { "type": "string", "description": "Base64 encoded Word file" },
+        "fileName": { "type": "string" },
+        "isCompressed": { "type": "boolean", "description": "Whether the fileData is compressed using LZString" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["name", "type", "fileData", "createdBy"]
+    }
+  },
+  "firestore": {
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Collection of courses"
+    },
+    "/enrollments/{enrollmentId}": {
+      "schema": "Enrollment",
+      "description": "Collection of student enrollments"
+    },
+    "/settings/{userId}": {
+      "schema": "OrganizationSettings",
+      "description": "User-specific organization settings"
+    },
+    "/settings/{userId}/representatives/{repId}": {
+      "schema": "Representative",
+      "description": "Sub-collection of legal representatives per organization"
+    },
+    "/templates/{templateId}": {
+      "schema": "CertificateTemplate",
+      "description": "Templates for certificate generation"
+    }
+  }
+}
