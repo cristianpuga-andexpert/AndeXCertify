@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   Save,
@@ -8,12 +8,22 @@ import {
   CheckCircle2,
   Plus,
   Award,
+  Palette,
+  RotateCcw,
+  Sparkles,
+  Zap,
 } from 'lucide-react';
 import { OrganizationSettings } from '../types';
 import { cn } from '../lib/utils';
 import { useAuth } from '../lib/auth-context';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from '../lib/api';
+import {
+  applyBrandColor,
+  extractDominantColors,
+  DEFAULT_BRAND_COLOR,
+  darkenHex,
+} from '../lib/colorUtils';
 
 export function SettingsInstitutional() {
   const { user } = useAuth();
@@ -26,9 +36,13 @@ export function SettingsInstitutional() {
     customStampName: '',
     stampStyle: 'circular_double',
     logoUrl: '',
+    brandColor: undefined,
     updatedAt: new Date().toISOString(),
   });
   const [showSavedMsg, setShowSavedMsg] = useState(false);
+  const [detectedColors, setDetectedColors] = useState<string[]>([]);
+  const [extracting, setExtracting] = useState(false);
+  const colorInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -42,7 +56,15 @@ export function SettingsInstitutional() {
             customStampName: settings.customStampName || '',
             stampStyle: settings.stampStyle || 'circular_double',
             logoUrl: settings.logoUrl || '',
+            brandColor: settings.brandColor,
           });
+          // Extract colors from existing logo
+          if (settings.logoUrl) {
+            setExtracting(true);
+            extractDominantColors(settings.logoUrl)
+              .then(setDetectedColors)
+              .finally(() => setExtracting(false));
+          }
         }
       })
       .catch(console.error)
@@ -54,6 +76,8 @@ export function SettingsInstitutional() {
     try {
       const saved = await api.put<OrganizationSettings>('/api/settings', orgSettings);
       setOrgSettings(saved);
+      // Re-apply color in case it was changed
+      applyBrandColor(saved.brandColor);
       setShowSavedMsg(true);
       setTimeout(() => setShowSavedMsg(false), 3000);
     } catch (err: any) {
@@ -87,6 +111,19 @@ export function SettingsInstitutional() {
         base64 = canvas.toDataURL('image/png', 0.7);
       }
       setOrgSettings(prev => ({ ...prev, logoUrl: base64 }));
+
+      // Auto-extract colors from the new logo
+      setExtracting(true);
+      setDetectedColors([]);
+      extractDominantColors(base64)
+        .then((colors) => {
+          setDetectedColors(colors);
+          // Auto-apply the most dominant color if no custom color is set yet
+          if (colors.length > 0) {
+            handleColorSelect(colors[0]);
+          }
+        })
+        .finally(() => setExtracting(false));
     };
     reader.readAsDataURL(file);
   };
@@ -94,8 +131,20 @@ export function SettingsInstitutional() {
   const handleRemoveLogo = () => {
     if (confirm('¿Está seguro de eliminar el logo institucional?')) {
       setOrgSettings(prev => ({ ...prev, logoUrl: '' }));
+      setDetectedColors([]);
     }
   };
+
+  const handleColorSelect = (color: string) => {
+    setOrgSettings(prev => ({ ...prev, brandColor: color }));
+    applyBrandColor(color); // live preview
+  };
+
+  const handleResetColor = () => {
+    handleColorSelect(DEFAULT_BRAND_COLOR);
+  };
+
+  const activeColor = orgSettings.brandColor || DEFAULT_BRAND_COLOR;
 
   if (loading) {
     return (
@@ -192,7 +241,190 @@ export function SettingsInstitutional() {
         </div>
       </section>
 
-      {/* ── Sección 2: Sello Digital ── */}
+      {/* ── Sección 2: Color Corporativo ── */}
+      <section className="card-base">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center space-x-3">
+          <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 transition-colors"
+            style={{ backgroundColor: `${activeColor}18` }}>
+            <Palette className="h-4 w-4" style={{ color: activeColor }} />
+          </div>
+          <div>
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-900">Color Corporativo</h2>
+            <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+              Define el color principal de la aplicación según tu identidad visual
+            </p>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Row: color activo + picker manual */}
+          <div className="flex flex-wrap items-start gap-6">
+
+            {/* Color activo */}
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 block">
+                Color Activo
+              </label>
+              <div className="flex items-center gap-4">
+                {/* Swatch grande */}
+                <div
+                  className="h-14 w-14 rounded-2xl shadow-lg border-4 border-white ring-1 ring-slate-200 shrink-0 transition-colors duration-300"
+                  style={{ backgroundColor: activeColor }}
+                />
+                <div>
+                  <div className="font-mono text-sm font-black text-slate-900 uppercase">
+                    {activeColor}
+                  </div>
+                  <div
+                    className="text-[8px] font-black uppercase tracking-widest mt-0.5"
+                    style={{ color: darkenHex(activeColor, 20) }}
+                  >
+                    {activeColor === DEFAULT_BRAND_COLOR ? 'Predeterminado' : 'Personalizado'}
+                  </div>
+                  {activeColor !== DEFAULT_BRAND_COLOR && (
+                    <button
+                      onClick={handleResetColor}
+                      className="flex items-center gap-1 text-[9px] font-bold text-slate-400 hover:text-slate-700 transition-colors mt-1.5"
+                    >
+                      <RotateCcw className="h-2.5 w-2.5" />
+                      Restaurar predeterminado
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Selector manual */}
+            <div>
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 block">
+                Color personalizado
+              </label>
+              <button
+                onClick={() => colorInputRef.current?.click()}
+                className="flex items-center gap-3 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl hover:border-slate-300 transition-all group"
+              >
+                <div
+                  className="h-7 w-7 rounded-lg border-2 border-white shadow-md shrink-0 transition-colors duration-200"
+                  style={{ backgroundColor: activeColor }}
+                />
+                <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest group-hover:text-slate-900">
+                  Elegir color
+                </span>
+                <input
+                  ref={colorInputRef}
+                  type="color"
+                  value={activeColor}
+                  onChange={(e) => handleColorSelect(e.target.value)}
+                  className="sr-only"
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Paleta detectada del logo */}
+          <AnimatePresence>
+            {(detectedColors.length > 0 || extracting) && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                className="space-y-3"
+              >
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3" />
+                  Colores detectados en el logo
+                  {extracting && (
+                    <span className="text-brand animate-pulse ml-2">Analizando...</span>
+                  )}
+                </label>
+
+                {detectedColors.length > 0 && (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {detectedColors.map((color, i) => (
+                      <motion.button
+                        key={color}
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.06 }}
+                        onClick={() => handleColorSelect(color)}
+                        title={color}
+                        className={cn(
+                          'relative h-11 w-11 rounded-xl border-4 shadow-lg transition-all duration-200 hover:scale-110 active:scale-95',
+                          activeColor === color
+                            ? 'border-slate-900 scale-110 ring-2 ring-offset-2 ring-slate-800'
+                            : 'border-white hover:border-slate-200'
+                        )}
+                        style={{ backgroundColor: color }}
+                      >
+                        {activeColor === color && (
+                          <span className="absolute -top-1 -right-1 h-4 w-4 bg-slate-900 rounded-full flex items-center justify-center">
+                            <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+                          </span>
+                        )}
+                      </motion.button>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Hint si no hay logo */}
+          {!orgSettings.logoUrl && (
+            <div className="flex items-center gap-2 text-[9px] text-slate-400 font-medium">
+              <Zap className="h-3 w-3 text-amber-400" />
+              Sube tu logo para detectar automáticamente los colores de tu marca
+            </div>
+          )}
+
+          {/* Vista previa */}
+          <div>
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 block">
+              Vista Previa en la Interfaz
+            </label>
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 flex flex-wrap items-center gap-4">
+              {/* Botón primario */}
+              <button
+                className="px-5 py-2.5 rounded-xl text-white text-[10px] font-black uppercase tracking-widest shadow-lg transition-all"
+                style={{
+                  backgroundColor: activeColor,
+                  boxShadow: `0 8px 24px ${activeColor}40`,
+                }}
+              >
+                Botón Principal
+              </button>
+
+              {/* Botón secundario */}
+              <button
+                className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border-2 bg-white transition-all"
+                style={{ borderColor: activeColor, color: activeColor }}
+              >
+                Secundario
+              </button>
+
+              {/* Badge / dot */}
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: activeColor }} />
+                <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: activeColor }}>
+                  Acento activo
+                </span>
+              </div>
+
+              {/* Input focus */}
+              <div className="flex-1 min-w-[160px]">
+                <div
+                  className="w-full px-4 py-2.5 bg-white border-2 rounded-xl text-xs font-medium text-slate-600 transition-all"
+                  style={{ borderColor: activeColor, boxShadow: `0 0 0 3px ${activeColor}20` }}
+                >
+                  Input enfocado
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Sección 3: Sello Digital ── */}
       <section className="card-base">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -292,7 +524,7 @@ export function SettingsInstitutional() {
             </div>
           </div>
 
-          {/* Preview */}
+          {/* Preview sello */}
           <div className="bg-slate-50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center p-6 min-h-[220px]">
             <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-4">
               Vista previa del timbre
@@ -362,7 +594,7 @@ export function SettingsInstitutional() {
         <div className="flex items-center space-x-3 flex-1 min-w-0">
           <AlertCircle className="h-4 w-4 text-slate-400 shrink-0" />
           <p className="text-[10px] font-bold text-slate-500 leading-relaxed">
-            Los cambios en identidad y sello afectarán los certificados generados a partir de este momento.
+            Los cambios en identidad, color y sello afectarán los certificados y la interfaz generados a partir de este momento.
           </p>
         </div>
         <button

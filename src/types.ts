@@ -68,6 +68,7 @@ export interface OrganizationSettings {
   customStampName?: string;
   stampStyle?: 'circular_double' | 'circular_horizontal' | 'circular_dots' | 'oval' | 'square';
   logoUrl?: string;
+  brandColor?: string;
   updatedAt: string;
 }
 

@@ -81,6 +81,7 @@ export const organizationSettings = pgTable('organization_settings', {
   customStampName: text('custom_stamp_name'),
   stampStyle:      stampStyleEnum('stamp_style').default('circular_double'),
   logoUrl:         text('logo_url'),                 // S3 URL after migration
+  brandColor:      text('brand_color'),              // hex color, e.g. '#6366f1'
   updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

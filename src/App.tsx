@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { CourseList } from './pages/CourseList';
 import { NewCourse } from './pages/NewCourse';
@@ -13,9 +13,23 @@ import { UserManagement } from './pages/UserManagement';
 import { AuthProvider, useAuth } from './lib/auth-context';
 import { LoginView } from './components/LoginView';
 import { Sidebar } from './components/Sidebar';
+import { api } from './lib/api';
+import { OrganizationSettings } from './types';
+import { applyBrandColor, DEFAULT_BRAND_COLOR } from './lib/colorUtils';
 
 function AppContent() {
   const { user } = useAuth();
+
+  // Apply the saved brand color from settings whenever a user logs in / out
+  useEffect(() => {
+    if (!user) {
+      applyBrandColor(DEFAULT_BRAND_COLOR);
+      return;
+    }
+    api.get<OrganizationSettings>('/api/settings')
+      .then((s) => { applyBrandColor(s?.brandColor); })
+      .catch(() => { applyBrandColor(DEFAULT_BRAND_COLOR); });
+  }, [user]);
 
   return (
     <div className="min-h-screen bg-surface font-sans overflow-x-hidden">

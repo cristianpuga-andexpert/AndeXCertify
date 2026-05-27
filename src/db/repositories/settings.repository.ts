@@ -14,6 +14,7 @@ function rowToSettings(row: SettingsRow): OrganizationSettings {
     customStampName: row.customStampName ?? undefined,
     stampStyle:      (row.stampStyle as StampStyle) ?? undefined,
     logoUrl:         row.logoUrl ?? undefined,
+    brandColor:      row.brandColor ?? undefined,
     updatedAt:       row.updatedAt instanceof Date
                        ? row.updatedAt.toISOString()
                        : String(row.updatedAt),
@@ -43,6 +44,7 @@ export async function upsertSettings(
     customStampName: data.customStampName ?? null,
     stampStyle:      (data.stampStyle as SettingsInsert['stampStyle']) ?? null,
     logoUrl:         data.logoUrl         ?? null,
+    brandColor:      data.brandColor      ?? null,
     updatedAt:       now,
   };
 
@@ -59,6 +61,7 @@ export async function upsertSettings(
         customStampName: values.customStampName,
         stampStyle:      values.stampStyle,
         logoUrl:         values.logoUrl,
+        brandColor:      values.brandColor,
         updatedAt:       now,
       },
     })
