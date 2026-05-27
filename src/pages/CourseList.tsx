@@ -12,6 +12,7 @@ import { api } from '../lib/api';
 export function CourseList() {
   const { user } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
+  const [enrollmentCounts, setEnrollmentCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -24,8 +25,14 @@ export function CourseList() {
     }
 
     setLoading(true);
-    api.get<Course[]>('/api/courses')
-      .then(setCourses)
+    Promise.all([
+      api.get<Course[]>('/api/courses'),
+      api.get<Record<string, number>>('/api/enrollment-counts'),
+    ])
+      .then(([courseList, counts]) => {
+        setCourses(courseList);
+        setEnrollmentCounts(counts);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [user]);
@@ -93,9 +100,9 @@ export function CourseList() {
           {/* Header row - Systematic feel */}
           <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-6 py-4">
             <div className="col-span-1 text-[10px] uppercase font-black text-slate-400 tracking-widest">ID</div>
-            <div className="col-span-4 text-[10px] uppercase font-black text-slate-400 tracking-widest">Entidad del Curso</div>
-            <div className="col-span-3 text-[10px] uppercase font-black text-slate-400 tracking-widest">Referencia / Enlace</div>
-            <div className="col-span-2 text-[10px] uppercase font-black text-slate-400 tracking-widest">Fecha de Integridad</div>
+            <div className="col-span-4 text-[10px] uppercase font-black text-slate-400 tracking-widest">Nombre del Curso</div>
+            <div className="col-span-3 text-[10px] uppercase font-black text-slate-400 tracking-widest">Participantes</div>
+            <div className="col-span-2 text-[10px] uppercase font-black text-slate-400 tracking-widest">Fecha Vencimiento</div>
             <div className="col-span-2 text-[10px] uppercase font-black text-slate-400 tracking-widest text-right">Acciones</div>
           </div>
 
@@ -124,20 +131,20 @@ export function CourseList() {
 
                 <div className="col-span-3">
                   <div className="flex items-center space-x-2">
-                    <div className={cn(
-                      "h-1.5 w-1.5 rounded-full shadow-sm",
-                      course.isSence ? "bg-amber-400" : "bg-slate-500"
-                    )}></div>
-                    <span className="text-[11px] font-medium text-slate-600 group-hover:text-slate-300 transition-colors">
-                      {course.isSence
-                        ? (course.senceData?.codigoSence ? `SENCE ${course.senceData.codigoSence}` : 'SENCE')
-                        : '—'}
+                    <Users className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand transition-colors shrink-0" />
+                    <span className="text-[13px] font-black text-slate-700 group-hover:text-white transition-colors">
+                      {enrollmentCounts[course.id] ?? 0}
+                    </span>
+                    <span className="text-[10px] font-medium text-slate-400 group-hover:text-slate-400 transition-colors">
+                      {(enrollmentCounts[course.id] ?? 0) === 1 ? 'persona' : 'personas'}
                     </span>
                   </div>
                 </div>
 
                 <div className="col-span-2 font-mono text-[11px] text-slate-500 group-hover:text-slate-400 transition-colors">
-                  {course.createdAt ? format(new Date(course.createdAt), 'dd/MM/yyyy') : '00/00/0000'}
+                  {course.expirationDate
+                    ? format(new Date(course.expirationDate), 'dd/MM/yyyy')
+                    : <span className="text-slate-300 group-hover:text-slate-600">Sin vencimiento</span>}
                 </div>
 
                 <div className="col-span-2 flex justify-end space-x-1 opacity-100">

@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../index';
 import { enrollments, EnrollmentRow, EnrollmentInsert } from '../schema';
 import { Enrollment, EnrollmentStatus } from '../../types';
@@ -89,4 +89,17 @@ export async function removeEnrollment(id: string, userId: string): Promise<void
   await db
     .delete(enrollments)
     .where(and(eq(enrollments.id, id), eq(enrollments.userId, userId)));
+}
+
+export async function countEnrollmentsByUser(userId: string): Promise<Record<string, number>> {
+  const rows = await db
+    .select({
+      courseId: enrollments.courseId,
+      count: sql<number>`cast(count(*) as integer)`,
+    })
+    .from(enrollments)
+    .where(eq(enrollments.userId, userId))
+    .groupBy(enrollments.courseId);
+
+  return Object.fromEntries(rows.map(r => [r.courseId, r.count]));
 }

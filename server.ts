@@ -16,7 +16,7 @@ import { uploadFromBase64, deleteFile, getSignedUrl } from './src/lib/storage';
 import { requireAuth, AuthRequest } from './src/lib/auth-middleware';
 import {
   listCoursesByUser, getCourseById, createCourse, updateCourse, removeCourse,
-  listEnrollmentsByCourse, getEnrollmentById, createEnrollment, updateEnrollment, removeEnrollment,
+  listEnrollmentsByCourse, getEnrollmentById, createEnrollment, updateEnrollment, removeEnrollment, countEnrollmentsByUser,
   getSettingsByUser, upsertSettings,
   listRepresentativesByUser, createRepresentative, removeRepresentative,
   listTemplatesByUser, getTemplateById, createTemplate, removeTemplate,
@@ -630,6 +630,13 @@ async function startServer() {
     try {
       const list = await listEnrollmentsByCourse(req.params.courseId, (req as AuthRequest).userId);
       res.json(list);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get('/api/enrollment-counts', requireAuth, async (req, res) => {
+    try {
+      const counts = await countEnrollmentsByUser((req as AuthRequest).userId);
+      res.json(counts);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
