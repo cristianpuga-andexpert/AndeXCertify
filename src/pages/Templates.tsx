@@ -1,30 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Building2, 
-  Plus, 
-  Trash2, 
+import {
+  Building2,
+  Plus,
+  Trash2,
   CheckCircle2,
   Upload,
   FileText,
   FileStack,
-  ShieldCheck
+  ShieldCheck,
+  Download
 } from 'lucide-react';
-import { 
-  collection, 
-  getDocs, 
-  addDoc, 
-  deleteDoc,
-  query,
-  orderBy,
-  doc,
-  where
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { CertificateTemplate } from '../types';
-import { handleFirestoreError, OperationType, cn } from '../lib/utils';
+import { cn } from '../lib/utils';
 import { useAuth } from '../lib/auth-context';
 import { motion, AnimatePresence } from 'motion/react';
-import LZString from 'lz-string';
+import { api } from '../lib/api';
 
 export function Templates() {
   const { user } = useAuth();
@@ -46,62 +36,37 @@ export function Templates() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    async function loadData() {
-      if (!user) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const templatesRef = collection(db, 'templates');
-        const qTemplates = query(
-          templatesRef, 
-          where('createdBy', '==', user.uid)
+    if (!user) return;
+    setLoading(true);
+    api.get<CertificateTemplate[]>('/api/templates')
+      .then(list => {
+        const sorted = [...list].sort((a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
-        const templatesSnap = await getDocs(qTemplates);
-        const templatesData = templatesSnap.docs
-          .map(doc => {
-            const data = doc.data() as CertificateTemplate;
-            // Decompress if needed
-            if (data.isCompressed && data.fileData) {
-              try {
-                const decompressed = LZString.decompressFromUTF16(data.fileData);
-                if (decompressed) {
-                  return { ...data, id: doc.id, fileData: decompressed };
-                }
-              } catch (e) {
-                console.error("Error decompressing template:", e);
-              }
-            }
-            return { id: doc.id, ...data };
-          })
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setTemplates(templatesData);
-      } catch (err: any) {
-        console.error("Error loading templates:", err);
-        setError("Error de permisos: Asegúrese de estar autenticado correctamente.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
+        setTemplates(sorted);
+      })
+      .catch((err) => {
+        console.error(err);
+        setError('Error al cargar las plantillas. Asegúrese de estar autenticado.');
+      })
+      .finally(() => setLoading(false));
   }, [user]);
 
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // 2.5MB Limit Check for UI - Compression will try to fit this into Firestore's 1MB limit
-      if (file.size > 2.5 * 1024 * 1024) {
-        setFieldError('El archivo es demasiado grande (Máximo 2.5MB). El sistema intentará comprimirlo, pero archivos muy pesados excederán el límite de base de datos.');
-        e.target.value = ''; // Reset input
+      if (file.size > 10 * 1024 * 1024) {
+        setFieldError('El archivo es demasiado grande (Máximo 10MB).');
+        e.target.value = '';
         return;
       }
-
       setFieldError(null);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setNewTemplate({ 
-          ...newTemplate, 
+        setNewTemplate({
+          ...newTemplate,
           fileData: reader.result as string,
-          fileName: file.name 
+          fileName: file.name,
         });
       };
       reader.readAsDataURL(file);
@@ -110,61 +75,43 @@ export function Templates() {
 
   const handleSaveTemplate = async () => {
     if (!user || !newTemplate.name || !newTemplate.fileData || isSaving) return;
-    
+
     setFieldError(null);
     setIsSaving(true);
-    const path = 'templates';
     try {
-      // Try to compress fileData to save space in Firestore
-      let finalFileData = newTemplate.fileData;
-      let isCompressed = false;
-
-      try {
-        const compressed = LZString.compressToUTF16(newTemplate.fileData);
-        // Only use compressed if it's actually smaller
-        if (compressed.length < newTemplate.fileData.length) {
-          finalFileData = compressed;
-          isCompressed = true;
+      // 1. Upload file to S3
+      const { s3Key } = await (async () => {
+        const res = await fetch('/api/templates/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileData: newTemplate.fileData,
+            fileName: newTemplate.fileName,
+            userId: user.id,
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({ error: res.statusText }));
+          throw new Error(body.error || res.statusText);
         }
-      } catch (e) {
-        console.warn("Compression failed, using raw data", e);
-      }
+        return res.json() as Promise<{ s3Key: string; publicUrl: string }>;
+      })();
 
-      // STRICT FIRESTORE LIMIT VALIDATION (1MB)
-      // Firestore counts total bytes in UTF-8. 
-      const templateData = {
+      // 2. Save DB record
+      const created = await api.post<CertificateTemplate>('/api/templates', {
         name: newTemplate.name,
         type: newTemplate.type,
-        fileData: finalFileData,
+        s3Key,
         fileName: newTemplate.fileName,
-        isCompressed,
-        createdAt: new Date().toISOString(),
-        createdBy: user.uid,
-      };
+      });
 
-      const encoder = new TextEncoder();
-      const totalBytes = encoder.encode(JSON.stringify(templateData)).length;
-      
-      // Firestore limit is 1,048,576 bytes. We leave a small buffer for metadata/ID.
-      if (totalBytes > 1040000) {
-        const sizeInMB = (totalBytes / (1024 * 1024)).toFixed(2);
-        setFieldError(`Error de Capacidad: Incluso con compresión, el documento pesa ${sizeInMB}MB. Por favor, optimice el archivo Word (elimine o comprima imágenes dentro del documento) para que pese menos de 1MB.`);
-        setIsSaving(false);
-        return;
-      }
-      
-      const docRef = await addDoc(collection(db, 'templates'), templateData);
-      
-      // Store the decompressed version in state for UI display (if needed)
-      setTemplates([{ ...templateData, id: docRef.id, fileData: newTemplate.fileData }, ...templates]);
+      setTemplates(prev => [created, ...prev]);
       setSuccess('¡Plantilla registrada correctamente!');
       setIsAddingTemplate(false);
       setNewTemplate({ name: '', type: 'sence', fileData: '', fileName: '' });
-      
-      // Auto-hide success message after 4 seconds
       setTimeout(() => setSuccess(null), 4000);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+    } catch (err: any) {
+      setFieldError('Error al guardar: ' + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -174,20 +121,48 @@ export function Templates() {
     setTemplateToDelete(id);
   };
 
+  const handleDownloadTemplate = async (template: CertificateTemplate) => {
+    try {
+      const res = await fetch(`/api/templates/signed-url?key=${encodeURIComponent(template.fileData)}`);
+      if (!res.ok) throw new Error('No se pudo obtener la URL de descarga');
+      const { url } = await res.json();
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = template.fileName || template.name + '.docx';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err: any) {
+      alert('Error al descargar la plantilla: ' + err.message);
+    }
+  };
+
   const executeDelete = async () => {
     if (!user || !templateToDelete || isDeleting) return;
-    
+
     setIsDeleting(true);
-    const path = `templates/${templateToDelete}`;
     try {
-      await deleteDoc(doc(db, 'templates', templateToDelete));
-      setTemplates(templates.filter(t => t.id !== templateToDelete));
+      // Find template to get S3 key before deleting DB record
+      const tpl = templates.find(t => t.id === templateToDelete);
+
+      await api.del(`/api/templates/${templateToDelete}`);
+
+      // Also delete from S3 if we have the key (fileData holds the S3 key)
+      if (tpl?.fileData) {
+        await fetch('/api/templates/s3', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ s3Key: tpl.fileData }),
+        }).catch(console.warn);
+      }
+
+      setTemplates(prev => prev.filter(t => t.id !== templateToDelete));
       setTemplateToDelete(null);
       setSuccess('Plantilla eliminada');
-      // Auto-hide success message
       setTimeout(() => setSuccess(null), 3000);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
+    } catch (err: any) {
+      alert('Error al eliminar: ' + err.message);
     } finally {
       setIsDeleting(false);
     }
@@ -209,7 +184,7 @@ export function Templates() {
           <ShieldCheck className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-sm font-black text-red-900 uppercase tracking-widest mb-2">Error de Acceso</h2>
           <p className="text-xs text-red-600 font-bold mb-6">{error}</p>
-          <button 
+          <button
             onClick={() => window.location.reload()}
             className="btn-primary bg-red-600 hover:bg-red-700"
           >
@@ -225,7 +200,7 @@ export function Templates() {
       <AnimatePresence>
         {templateToDelete && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
@@ -238,16 +213,16 @@ export function Templates() {
               <p className="text-[11px] text-slate-500 font-bold mb-8 uppercase tracking-tight">
                 ¿Está seguro que desea eliminar? Esta acción no se puede deshacer.
               </p>
-              
+
               <div className="flex space-x-3">
-                <button 
+                <button
                   disabled={isDeleting}
                   onClick={() => setTemplateToDelete(null)}
                   className="flex-1 px-6 py-3 border-2 border-slate-100 rounded-xl text-[10px] uppercase font-black text-slate-400 hover:bg-slate-50 transition-all tracking-widest"
                 >
                   No
                 </button>
-                <button 
+                <button
                   disabled={isDeleting}
                   onClick={executeDelete}
                   className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] uppercase font-black hover:bg-red-700 transition-all tracking-widest shadow-lg shadow-red-600/20 flex items-center justify-center"
@@ -265,9 +240,9 @@ export function Templates() {
       </AnimatePresence>
 
       <header className="mb-12">
-        <div className="flex items-center space-x-2 text-[10px] font-black text-brand uppercase tracking-[0.2em] mb-2 font-mono">
-            <div className="h-1.5 w-1.5 rounded-full bg-brand animate-pulse"></div>
-            <span>Document Architecture Lab</span>
+        <div className="flex items-center space-x-2 text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mb-2">
+          <div className="h-1 w-1 rounded-full bg-slate-400"></div>
+          <span>Panel de Plantillas</span>
         </div>
         <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-none">
           Gestión de <span className="text-brand">Plantillas</span>
@@ -276,7 +251,7 @@ export function Templates() {
 
       <AnimatePresence>
         {success && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -20, height: 0 }}
             animate={{ opacity: 1, y: 0, height: 'auto' }}
             exit={{ opacity: 0, y: -20, height: 0 }}
@@ -287,10 +262,7 @@ export function Templates() {
                 <CheckCircle2 className="h-5 w-5" />
                 <span className="text-[11px] font-black uppercase tracking-widest">{success}</span>
               </div>
-              <button 
-                onClick={() => setSuccess(null)}
-                className="text-emerald-400 hover:text-emerald-600 transition-colors"
-              >
+              <button onClick={() => setSuccess(null)} className="text-emerald-400 hover:text-emerald-600 transition-colors">
                 <Plus className="h-4 w-4 rotate-45" />
               </button>
             </div>
@@ -306,12 +278,9 @@ export function Templates() {
             </div>
             <h2 className="text-sm font-black uppercase tracking-widest text-slate-900">Repositorio de Formatos</h2>
           </div>
-          
+
           {!isAddingTemplate && (
-            <button 
-              onClick={() => setIsAddingTemplate(true)}
-              className="btn-primary py-3 px-6"
-            >
+            <button onClick={() => setIsAddingTemplate(true)} className="btn-primary py-3 px-6">
               <Plus className="h-4 w-4 mr-2" />
               <span className="text-[10px] uppercase font-black">Subir Nueva Plantilla</span>
             </button>
@@ -320,7 +289,7 @@ export function Templates() {
 
         <AnimatePresence>
           {isAddingTemplate && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -329,8 +298,8 @@ export function Templates() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Nombre Identificador</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={newTemplate.name}
                     onChange={(e) => setNewTemplate({ ...newTemplate, name: e.target.value })}
                     className="input-base text-xs font-bold"
@@ -340,7 +309,7 @@ export function Templates() {
                 <div>
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Tipo de Aplicación</label>
                   <div className="flex bg-white rounded-lg p-1 shadow-sm border border-slate-200">
-                    <button 
+                    <button
                       onClick={() => setNewTemplate({ ...newTemplate, type: 'sence' })}
                       className={cn(
                         "flex-1 px-4 py-2 text-[8px] font-black uppercase tracking-widest rounded transition-all",
@@ -349,7 +318,7 @@ export function Templates() {
                     >
                       Con SENCE
                     </button>
-                    <button 
+                    <button
                       onClick={() => setNewTemplate({ ...newTemplate, type: 'non-sence' })}
                       className={cn(
                         "flex-1 px-4 py-2 text-[8px] font-black uppercase tracking-widest rounded transition-all",
@@ -365,11 +334,11 @@ export function Templates() {
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Cargar Formato Word (.docx)</label>
                 <label className="relative block group">
-                  <input 
-                    type="file" 
-                    accept=".docx" 
+                  <input
+                    type="file"
+                    accept=".docx"
                     onChange={handleTemplateUpload}
-                    className="hidden" 
+                    className="hidden"
                   />
                   <div className="py-16 border-2 border-dashed border-slate-200 rounded-2xl bg-white flex flex-col items-center justify-center group-hover:border-brand group-hover:bg-indigo-50 transition-all cursor-pointer">
                     {newTemplate.fileData ? (
@@ -384,7 +353,7 @@ export function Templates() {
                       <>
                         <Upload className="h-10 w-10 text-slate-200 group-hover:text-brand transition-colors mb-4" />
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600">Click para seleccionar archivo</span>
-                        <span className="text-[8px] font-bold text-slate-300 mt-2">Arrastre aquí su archivo con campos {"{{MARCADORES}}"}</span>
+                        <span className="text-[8px] font-bold text-slate-300 mt-2">Arrastre aquí su archivo con campos {`{{MARCADORES}}`}</span>
                       </>
                     )}
                   </div>
@@ -395,15 +364,15 @@ export function Templates() {
               </div>
 
               <div className="flex space-x-4 pt-4 border-t border-slate-100">
-                <button 
+                <button
                   disabled={isSaving}
                   onClick={() => setIsAddingTemplate(false)}
                   className="flex-1 bg-white border border-slate-200 py-4 rounded-xl text-[10px] uppercase font-black text-slate-400 hover:bg-slate-50 transition-all tracking-widest disabled:opacity-50"
                 >
                   Descartar
                 </button>
-                <button 
-                  disabled={isSaving}
+                <button
+                  disabled={isSaving || !newTemplate.name || !newTemplate.fileData}
                   onClick={handleSaveTemplate}
                   className="flex-1 btn-primary py-4 disabled:opacity-50 flex items-center justify-center"
                 >
@@ -425,8 +394,8 @@ export function Templates() {
           {templates.length === 0 && !isAddingTemplate ? (
             <div className="py-32 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
               <FileStack className="h-12 w-12 text-slate-200 mx-auto mb-4" />
-              <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">No hay arquitectura registrada</h3>
-              <p className="text-[11px] text-slate-400 mt-2 font-medium">Inicie la carga de formatos para automatizar la emisión.</p>
+              <h3 className="text-sm font-black text-slate-500 mb-1">No hay plantillas cargadas</h3>
+              <p className="text-[11px] text-slate-400 font-medium">Sube tu primer archivo .docx con marcadores para empezar a generar certificados automáticamente.</p>
             </div>
           ) : (
             <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
@@ -438,7 +407,7 @@ export function Templates() {
               </div>
               <div className="divide-y divide-slate-50">
                 {templates.map((template) => (
-                  <motion.div 
+                  <motion.div
                     key={template.id}
                     layout
                     initial={{ opacity: 0, x: -20 }}
@@ -458,8 +427,8 @@ export function Templates() {
                     <div className="col-span-3">
                       <span className={cn(
                         "text-[8px] font-black uppercase px-2.5 py-1 rounded-full border",
-                        template.type === 'sence' 
-                          ? "bg-amber-50 text-amber-600 border-amber-100" 
+                        template.type === 'sence'
+                          ? "bg-amber-50 text-amber-600 border-amber-100"
                           : "bg-blue-50 text-blue-600 border-blue-100"
                       )}>
                         {template.type === 'sence' ? 'SENCE' : 'Estándar'}
@@ -473,10 +442,18 @@ export function Templates() {
                       </div>
                     </div>
 
-                    <div className="col-span-2 text-right">
-                      <button 
-                        onClick={() => handleDeleteTemplate(template.id)}
-                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    <div className="col-span-2 flex items-center justify-end space-x-1 opacity-0 group-hover:opacity-100 transition-all">
+                      <button
+                        onClick={() => handleDownloadTemplate(template)}
+                        title="Descargar plantilla (.docx)"
+                        className="p-2 text-slate-300 hover:text-brand hover:bg-indigo-50 rounded-lg transition-all"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTemplate(template.id!)}
+                        title="Eliminar plantilla"
+                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -497,10 +474,10 @@ export function Templates() {
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              '{{EMPRESA_OTEC}}', 
-              '{{RUT_EMPRESA_OTEC}}', 
-              '{{NOMBRE_CURSO}}', 
-              '{{NOMBRE_ALUMNO}}', 
+              '{{EMPRESA_OTEC}}',
+              '{{RUT_EMPRESA_OTEC}}',
+              '{{NOMBRE_CURSO}}',
+              '{{NOMBRE_ALUMNO}}',
               '{{RUT_ALUMNO}}',
               '{{EMPRESA_CLIENTE}}',
               '{{RUT_EMPRESA_CLIENTE}}',

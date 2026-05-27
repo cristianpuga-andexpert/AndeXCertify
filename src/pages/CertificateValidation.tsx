@@ -1,15 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { doc, getDoc, collection, query, orderBy, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { Enrollment, Course, OrganizationSettings, Representative, CertificateTemplate as ITemplate } from '../types';
-import { CheckCircle2, Award, Calendar, User, FileCheck, XCircle, Info, Download, Loader2, AlertCircle, X, Terminal, Copy, Check } from 'lucide-react';
+import { Enrollment, Course, OrganizationSettings, Representative } from '../types';
+import { CheckCircle2, Calendar, Download, Loader2, AlertCircle, XCircle, X, Terminal, Copy, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { formatRut, handleFirestoreError, OperationType, cn } from '../lib/utils';
+import { formatRut } from '../lib/utils';
 import { motion } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
-import LZString from 'lz-string';
 
 export function CertificateValidation() {
   const { certificateId } = useParams();
@@ -17,6 +14,7 @@ export function CertificateValidation() {
   const [course, setCourse] = useState<Course | null>(null);
   const [settings, setSettings] = useState<OrganizationSettings | null>(null);
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
+  const [templateS3Key, setTemplateS3Key] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
@@ -30,55 +28,25 @@ export function CertificateValidation() {
         setLoading(false);
         return;
       }
-      
-      console.log("🔍 Validating certificate:", certificateId);
-      
+
+      console.log('🔍 Validating certificate:', certificateId);
+
       try {
-        const enrollSnap = await getDoc(doc(db, 'enrollments', certificateId));
-        if (enrollSnap.exists()) {
-          const enrollData = { id: enrollSnap.id, ...enrollSnap.data() } as Enrollment;
-          setEnrollment(enrollData);
-          console.log("✅ Enrollment found:", enrollData.studentName);
-          
-          // Get Course
-          if (enrollData.courseId) {
-            const courseSnap = await getDoc(doc(db, 'courses', enrollData.courseId));
-            if (courseSnap.exists()) {
-              const courseData = { id: courseSnap.id, ...courseSnap.data() } as Course;
-              setCourse(courseData);
-              console.log("✅ Course found:", courseData.nameVisible);
-
-              // Get Settings from course creator
-              if (courseData.createdBy) {
-                const settingsSnap = await getDoc(doc(db, 'settings', courseData.createdBy));
-                if (settingsSnap.exists()) {
-                  setSettings(settingsSnap.data() as OrganizationSettings);
-                }
-
-                // Get Representatives
-                try {
-                  const repsRef = collection(db, 'settings', courseData.createdBy, 'representatives');
-                  const qReps = query(repsRef, orderBy('createdAt', 'desc'));
-                  const repsSnap = await getDocs(qReps);
-                  setRepresentatives(repsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Representative)));
-                } catch (repErr) {
-                  console.error("Error fetching representatives:", repErr);
-                }
-              }
-            } else {
-              console.error("❌ Course not found:", enrollData.courseId);
-              setErrorStatus('Curso asociado no encontrado');
-            }
-          } else {
-            setErrorStatus('Datos de curso faltantes en inscripción');
-          }
-        } else {
-          console.error("❌ Enrollment not found:", certificateId);
-          setErrorStatus('Certificado no encontrado en nuestros registros');
+        const res = await fetch(`/api/public/validate/${certificateId}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({ error: res.statusText }));
+          throw new Error(body.error || res.statusText);
         }
-      } catch (err) {
-        console.error("❌ Verification Error:", err);
-        setErrorStatus('Error al conectar con el servicio de verificación');
+        const data = await res.json();
+        setEnrollment(data.enrollment);
+        setCourse(data.course);
+        setSettings(data.settings || null);
+        setRepresentatives(data.representatives || []);
+        setTemplateS3Key(data.templateS3Key ?? null);
+        console.log('✅ Certificate data loaded:', data.enrollment?.studentName);
+      } catch (err: any) {
+        console.error('❌ Verification Error:', err);
+        setErrorStatus(err.message || 'Error al conectar con el servicio de verificación');
       } finally {
         setLoading(false);
       }
@@ -89,12 +57,11 @@ export function CertificateValidation() {
 
   const handleDownload = async (asPdf: boolean = false) => {
     if (!enrollment || !course || !settings || isDownloading) return;
-    
+
     setIsDownloading(true);
     try {
       const currentRepresentative = representatives[0] || null;
-      
-      // Helper to convert URL to Base64
+
       const urlToBase64 = async (url: string): Promise<string> => {
         if (!url) return '';
         if (url.startsWith('data:image/png')) return url;
@@ -108,7 +75,7 @@ export function CertificateValidation() {
             reader.readAsDataURL(blob);
           });
         } catch (e) {
-          console.error("Error converting URL to base64:", e);
+          console.error('Error converting URL to base64:', e);
           return '';
         }
       };
@@ -118,7 +85,7 @@ export function CertificateValidation() {
        */
       const compositeSignatureWithStamp = async (
         signatureBase64: string,
-        cfg: { useCustomStamp: boolean, customStampName: string, lema: string, orgName: string, orgRut: string }
+        cfg: { useCustomStamp: boolean; customStampName: string; lema: string; orgName: string; orgRut: string }
       ): Promise<string> => {
         const W = 396, H = 260;
         const canvas = document.createElement('canvas');
@@ -175,7 +142,6 @@ export function CertificateValidation() {
         return canvas.toDataURL('image/png');
       };
 
-      // Prepare markers
       const markerData = {
         EMPRESA_OTEC: settings.name || 'OTEC',
         RUT_OTEC: settings.rut || '',
@@ -197,11 +163,10 @@ export function CertificateValidation() {
         ID_CERTIFICADO: enrollment.id,
         REPRESENTANTE_NOMBRE: currentRepresentative?.name || '',
         REPRESENTANTE_RUT: currentRepresentative?.rut || '',
-        // Image tags
         QR: 'QR',
         FIRMA_OTEC: 'FIRMA_OTEC',
         FIRMA: 'FIRMA',
-        TIMBRE: 'TIMBRE'
+        TIMBRE: 'TIMBRE',
       };
 
       // QR Code Base64
@@ -211,28 +176,28 @@ export function CertificateValidation() {
         const svg = qrContainer.querySelector('svg');
         if (svg) {
           const svgData = new XMLSerializer().serializeToString(svg);
-          const canvas = document.createElement("canvas");
+          const canvas = document.createElement('canvas');
           canvas.width = 200; canvas.height = 200;
-          const ctx = canvas.getContext("2d");
+          const ctx = canvas.getContext('2d');
           const img = new Image();
-          img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+          img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
           await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
           ctx?.drawImage(img, 0, 0, 200, 200);
-          qrBase64 = canvas.toDataURL("image/png");
+          qrBase64 = canvas.toDataURL('image/png');
         }
       }
 
-      // Signature base64
-      const rawSignatureBase64 = currentRepresentative?.signatureUrl 
+      const rawSignatureBase64 = currentRepresentative?.signatureUrl
         ? await urlToBase64(currentRepresentative.signatureUrl)
         : '';
-      
+
       const stampConfig = {
         useCustomStamp: settings.useCustomStamp || false,
         customStampName: settings.customStampName || '',
         lema: settings.lema || '',
         orgName: settings.name || 'OTEC',
         orgRut: settings.rut || '',
+        stampStyle: settings.stampStyle || 'circular_double',
       };
 
       const signatureWithStampBase64 = await compositeSignatureWithStamp(rawSignatureBase64, stampConfig);
@@ -241,21 +206,24 @@ export function CertificateValidation() {
         FIRMA: signatureWithStampBase64,
         FIRMA_OTEC: signatureWithStampBase64,
         QR: qrBase64,
-        TIMBRE: '' 
+        TIMBRE: '',
       };
 
-      // Template selection
+      // Template: fetch DOCX from S3 if custom, otherwise built-in name is sent empty
       let templateBase64 = '';
       const builtIn = ['modern', 'diploma', 'classic', 'tech', 'minimal'];
       const templateId = course.templateId || 'modern';
 
-      if (!builtIn.includes(templateId)) {
-        const tDoc = await getDoc(doc(db, 'templates', templateId));
-        if (tDoc.exists()) {
-          const tData = tDoc.data() as ITemplate;
-          templateBase64 = tData.fileData;
-          if (tData.isCompressed) {
-            templateBase64 = LZString.decompressFromUTF16(templateBase64) || '';
+      if (!builtIn.includes(templateId) && templateS3Key) {
+        const signedRes = await fetch(`/api/templates/signed-url?key=${encodeURIComponent(templateS3Key)}`);
+        if (signedRes.ok) {
+          const { url } = await signedRes.json();
+          const fileRes = await fetch(url);
+          if (fileRes.ok) {
+            const buf = await fileRes.arrayBuffer();
+            templateBase64 =
+              'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,' +
+              btoa(String.fromCharCode(...new Uint8Array(buf)));
           }
         }
       }
@@ -265,11 +233,11 @@ export function CertificateValidation() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          templateBase64: templateBase64,
+          templateBase64,
           data: markerData,
-          images: images,
-          stampConfig: stampConfig
-        })
+          images,
+          stampConfig,
+        }),
       });
 
       if (!response.ok) {
@@ -307,24 +275,24 @@ export function CertificateValidation() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center p-8">
-        <div className="flex flex-col items-center space-y-4">
-          <Loader2 className="h-12 w-12 text-teal-600 animate-spin" />
-        </div>
+      <div className="min-h-screen bg-surface flex items-center justify-center p-8">
+        <Loader2 className="h-12 w-12 text-brand animate-spin" />
       </div>
     );
   }
 
   if (errorStatus || !enrollment || !course) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="bg-white p-12 rounded-3xl shadow-xl max-w-md w-full text-center">
-          <XCircle className="h-20 w-20 text-red-500 mx-auto mb-6" />
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Validación Fallida</h1>
-          <p className="text-slate-500 mb-8">
+      <div className="min-h-screen bg-surface flex items-center justify-center p-6">
+        <div className="card-base p-12 max-w-md w-full text-center">
+          <div className="h-20 w-20 bg-red-50 border border-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <XCircle className="h-10 w-10 text-red-500" />
+          </div>
+          <h1 className="text-2xl font-black text-slate-900 mb-2">Validación Fallida</h1>
+          <p className="text-slate-500 text-sm mb-8 leading-relaxed">
             {errorStatus || 'El certificado no pudo ser verificado. Es posible que el código sea inválido o haya sido revocado.'}
           </p>
-          <Link to="/" className="inline-block bg-slate-100 text-slate-600 px-6 py-2 rounded-xl font-bold hover:bg-slate-200 transition-colors">
+          <Link to="/" className="btn-secondary inline-flex">
             Volver al inicio
           </Link>
         </div>
@@ -333,136 +301,119 @@ export function CertificateValidation() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start p-4 sm:p-8 pt-12 md:pt-20">
+    <div className="min-h-screen bg-surface flex flex-col items-center justify-start p-4 sm:p-8 pt-12 md:pt-20">
       {/* Hidden QR for download */}
       <div id="qr-download-hidden" className="hidden">
         <QRCodeSVG value={`${window.location.origin}/validar/${enrollment.id}`} size={200} />
       </div>
 
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 border border-slate-100 overflow-hidden"
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="w-full max-w-xl"
       >
-        {/* Header Section */}
-        <div className="p-10 pb-6 text-center">
+        {/* ── Logo / org header ── */}
+        <div className="text-center mb-8">
           {settings?.logoUrl ? (
-            <img src={settings.logoUrl} alt="Logo" className="h-28 mx-auto mb-6 object-contain" />
+            <img src={settings.logoUrl} alt="Logo" className="h-16 mx-auto mb-3 object-contain" />
           ) : (
-            <div className="space-y-2 mb-6">
-              <h1 className="text-3xl font-black text-teal-800 tracking-tighter">Laboralcap E.I.R.L.</h1>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Organismo Técnico de Capacitación</p>
-            </div>
+            <p className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">{settings?.name || ''}</p>
           )}
-
-          <div className="mt-12 flex flex-col items-center">
-            <div className="flex items-center justify-center h-28 w-28 rounded-full bg-teal-600 shadow-2xl shadow-teal-600/30 mb-8 border-[10px] border-teal-50">
-              <CheckCircle2 className="h-14 w-14 text-white" strokeWidth={2.5} />
-            </div>
-            <h2 className="text-4xl font-black text-slate-900 tracking-tighter font-serif">Certificado Verificado</h2>
-            <div className="mt-4 flex items-center space-x-2 text-teal-600 bg-teal-50 px-4 py-1.5 rounded-full border border-teal-100">
-              <div className="h-2 w-2 rounded-full bg-teal-600 animate-pulse"></div>
-              <span className="text-[10px] font-black uppercase tracking-widest leading-none">Autenticidad Confirmada por OTEC</span>
-            </div>
-          </div>
         </div>
 
-        {/* Content Section */}
-        <div className="px-10 pb-12 space-y-12">
-          {/* Informacion del Alumno */}
-          <div className="space-y-5">
-            <div className="flex items-center space-x-3 text-teal-600">
-              <User className="h-5 w-5" strokeWidth={2.5} />
-              <h3 className="text-[12px] font-black uppercase tracking-[0.2em] font-serif">Información del Alumno</h3>
+        {/* ── Main card ── */}
+        <div className="card-base overflow-visible">
+
+          {/* Verification badge */}
+          <div className="flex flex-col items-center pt-10 pb-8 px-8 border-b border-slate-100">
+            <div className="h-20 w-20 rounded-full bg-brand flex items-center justify-center shadow-xl shadow-brand/30 mb-6 ring-8 ring-brand/10">
+              <CheckCircle2 className="h-10 w-10 text-white" strokeWidth={2.5} />
             </div>
-            <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-8 md:p-10">
-              <h4 className="text-3xl font-black text-slate-900 font-serif mb-4 leading-tight">{enrollment.studentName}</h4>
-              <div className="flex flex-wrap gap-4 items-center">
-                <div className="bg-white px-5 py-2 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Cédula Identidad</span>
-                  <span className="text-slate-900 font-mono text-lg font-black tracking-tighter">{formatRut(enrollment.studentRut)}</span>
-                </div>
-                <div className="flex items-center space-x-3 text-slate-400 px-4 py-2 border-l-2 border-slate-100">
-                  <Calendar className="h-5 w-5" />
-                  <div className="flex flex-col">
-                    <span className="text-[9px] font-black uppercase tracking-widest">Fecha de Emisión</span>
-                    <span className="text-xs font-bold text-slate-600">{format(new Date(enrollment.enrollmentDate || Date.now()), "d 'de' MMMM, yyyy", { locale: es })}</span>
+            <h2 className="text-3xl font-black text-slate-900 tracking-tight mb-3">Certificado Verificado</h2>
+            <div className="flex items-center space-x-2 bg-brand/10 text-brand px-4 py-1.5 rounded-full border border-brand/20">
+              <div className="h-1.5 w-1.5 rounded-full bg-brand animate-pulse" />
+              <span className="text-[9px] font-black uppercase tracking-widest">Autenticidad Confirmada por OTEC</span>
+            </div>
+          </div>
+
+          <div className="p-8 space-y-6">
+            {/* ── Alumno ── */}
+            <div>
+              <div className="flex items-center space-x-2 mb-3">
+                <div className="h-1 w-1 rounded-full bg-brand" />
+                <span className="text-[10px] font-black text-brand uppercase tracking-[0.2em]">Información del Alumno</span>
+              </div>
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 space-y-4">
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">{enrollment.studentName}</h3>
+                <div className="flex flex-wrap gap-3">
+                  <div className="flex flex-col bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm">
+                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Cédula Identidad</span>
+                    <span className="text-slate-900 font-mono font-black text-base tracking-tight">{formatRut(enrollment.studentRut)}</span>
+                  </div>
+                  <div className="flex items-center space-x-2.5 bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm">
+                    <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Fecha de Emisión</span>
+                      <span className="text-slate-700 font-bold text-sm">{format(new Date(enrollment.enrollmentDate || Date.now()), "d 'de' MMMM, yyyy", { locale: es })}</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Informacion del Curso */}
-          <div className="space-y-5">
-            <div className="flex items-center space-x-3 text-teal-600">
-              <Award className="h-5 w-5" strokeWidth={2.5} />
-              <h3 className="text-[12px] font-black uppercase tracking-[0.2em] font-serif">Información del Curso</h3>
-            </div>
-            <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-8 md:p-10">
-              <h4 className="text-3xl font-black text-slate-900 font-serif mb-4 leading-tight">{course.nameVisible}</h4>
-              <div className="space-y-4">
-                 <div className="flex items-center space-x-4">
-                   <div className="h-1 w-8 bg-teal-600 rounded-full"></div>
-                   <p className="text-xs font-black text-slate-500 uppercase tracking-widest">{settings?.name || 'Laboralcap E.I.R.L.'}</p>
-                 </div>
-                 {course.senceData?.codigoSence && (
-                   <div className="inline-block bg-teal-950 text-emerald-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] border border-emerald-900">
-                     SENCE: {course.senceData.codigoSence}
-                   </div>
-                 )}
+            {/* ── Curso ── */}
+            <div>
+              <div className="flex items-center space-x-2 mb-3">
+                <div className="h-1 w-1 rounded-full bg-brand" />
+                <span className="text-[10px] font-black text-brand uppercase tracking-[0.2em]">Información del Curso</span>
+              </div>
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 space-y-3">
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">{course.nameVisible}</h3>
+                <div className="flex items-center space-x-3">
+                  <div className="h-0.5 w-6 bg-brand rounded-full" />
+                  <p className="text-xs font-black text-slate-500 uppercase tracking-widest">{settings?.name || ''}</p>
+                </div>
+                {course.senceData?.codigoSence && (
+                  <div className="inline-flex bg-slate-900 text-brand px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] border border-slate-700">
+                    SENCE: {course.senceData.codigoSence}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
 
-          {/* Validated Footer Box */}
-          <div className="bg-slate-900 rounded-3xl p-8 flex items-center space-x-6 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-teal-500/10 rounded-full -translate-y-16 translate-x-16 blur-2xl group-hover:bg-teal-500/20 transition-all"></div>
-            <div className="bg-teal-500/20 p-3 rounded-2xl border border-teal-500/30">
-              <CheckCircle2 className="h-8 w-8 text-teal-400" />
+            {/* ── Documento Oficial box ── */}
+            <div className="bg-slate-900 rounded-2xl p-6 flex items-center space-x-5 relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-brand/10 to-transparent pointer-events-none" />
+              <div className="bg-brand/20 p-2.5 rounded-xl border border-brand/30 shrink-0">
+                <CheckCircle2 className="h-6 w-6 text-brand" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-white font-black text-base leading-tight mb-0.5">Documento Oficial</p>
+                <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.15em] truncate">
+                  Validado vía Sistema AndeXCertify · ID: {enrollment.id.slice(0, 16)}
+                </p>
+              </div>
             </div>
-            <div className="flex-1">
-              <p className="text-white font-black font-serif text-lg leading-tight mb-1">Documento Oficial</p>
-              <p className="text-teal-400/60 text-[9px] font-black uppercase tracking-[0.2em]">Validado via Blockchain • ID: {enrollment.id.slice(0, 16)}</p>
-            </div>
-          </div>
 
-          {/* Action Button */}
-          <div className="flex flex-col sm:flex-row justify-center gap-4 pt-6">
+            {/* ── PDF button ── */}
             <button
               onClick={() => handleDownload(true)}
               disabled={isDownloading}
-              className="flex-1 group relative flex items-center justify-center space-x-4 bg-red-600 text-white py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-sm shadow-2xl shadow-red-600/30 hover:bg-red-700 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+              className="w-full btn-primary py-4 text-[11px] disabled:opacity-50 space-x-3"
             >
-              {isDownloading ? (
-                <Loader2 className="h-6 w-6 animate-spin" />
-              ) : (
-                <Download className="h-6 w-6 group-hover:translate-y-1 transition-transform" />
-              )}
-              <span className="tracking-widest">{isDownloading ? 'Generando...' : 'Descargar PDF'}</span>
-            </button>
-
-            <button
-              onClick={() => handleDownload(false)}
-              disabled={isDownloading}
-              className="flex-1 group relative flex items-center justify-center space-x-4 bg-teal-600 text-white py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-sm shadow-2xl shadow-teal-600/30 hover:bg-teal-700 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
-            >
-              {isDownloading ? (
-                <Loader2 className="h-6 w-6 animate-spin" />
-              ) : (
-                <Download className="h-6 w-6 group-hover:translate-y-1 transition-transform" />
-              )}
-              <span className="tracking-widest">{isDownloading ? 'Generando...' : 'Descargar Word'}</span>
+              {isDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              <span>{isDownloading ? 'Generando PDF...' : 'Descargar Certificado PDF'}</span>
             </button>
           </div>
         </div>
-      </motion.div>
 
-      <footer className="mt-16 text-center pb-12">
-        <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.5em] opacity-30">
-          Digital Trust Ecosystem • {settings?.name || 'Laboralcap E.I.R.L.'}
-        </p>
-      </footer>
+        <footer className="mt-10 text-center pb-12">
+          <p className="text-[9px] text-slate-400 font-black uppercase tracking-[0.4em] opacity-50">
+            AndeXCertify · Sistema de Gestión de Certificados
+          </p>
+        </footer>
+      </motion.div>
 
       {/* LibreOffice Instruction Modal */}
       {libreOfficeError && (
@@ -478,7 +429,7 @@ export function CertificateValidation() {
                   <p className="text-xs text-slate-500 font-medium mt-0.5">Generación de PDF con Alta Fidelidad (LibreOffice)</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setLibreOfficeError(null)}
                 className="text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 p-2 rounded-xl transition-all"
               >
@@ -491,7 +442,6 @@ export function CertificateValidation() {
                 Has configurado el sistema para generar tus certificados PDF con la máxima fidelidad posible utilizando el motor nativo de LibreOffice headless (DOCX → PDF). No obstante, este binario requiere privilegios de sistema operativo para su instalación.
               </p>
 
-              {/* Diagnostics / Server Error code block */}
               <div className="bg-rose-50/50 border border-rose-100 rounded-2xl p-5 space-y-2">
                 <div className="flex items-center space-x-2 text-rose-700 text-xs font-black uppercase tracking-wider">
                   <Terminal className="h-4 w-4" />
@@ -502,7 +452,6 @@ export function CertificateValidation() {
                 </p>
               </div>
 
-              {/* Instructions */}
               <div className="space-y-4">
                 <h3 className="font-bold text-slate-800 text-sm flex items-center space-x-2">
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold ring-1 ring-indigo-100">1</span>
@@ -518,7 +467,7 @@ sudo apt install -y libreoffice`}
                   </pre>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText("sudo apt update && sudo apt install -y libreoffice");
+                      navigator.clipboard.writeText('sudo apt update && sudo apt install -y libreoffice');
                       setCopiedText(true);
                       setTimeout(() => setCopiedText(false), 2000);
                     }}

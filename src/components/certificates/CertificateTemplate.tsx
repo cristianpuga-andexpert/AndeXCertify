@@ -2,8 +2,7 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Course, Enrollment, OrganizationSettings, Representative } from '../../types';
 import { format } from 'date-fns';
-import { formatRut, cn } from '../../lib/utils';
-
+import { formatRut } from '../../lib/utils';
 import { renderAsync } from 'docx-preview';
 
 interface Props {
@@ -15,423 +14,548 @@ interface Props {
   templateBlob?: ArrayBuffer | null;
 }
 
+// Spanish month names
+const MONTHS_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+                   'agosto','septiembre','octubre','noviembre','diciembre'];
+const formatDateES = (dateStr?: string): string => {
+  const d = dateStr ? new Date(dateStr) : new Date();
+  return `${d.getDate()} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`;
+};
+
 export function CertificateTemplate({ course, enrollment, settings, representative, templateId, templateBlob }: Props) {
-  // Fix ERROR 1: Null checks for required data
   if (!enrollment || !course) return null;
 
   const verificationUrl = `${window.location.origin}/verify/${enrollment.id}`;
-
-  const orgName = settings?.name || 'Laboralcap E.I.R.L';
-  const orgRut = settings?.rut || '76.058.374-K';
-  const repName = representative?.name || 'Alejandra Arce Núñez';
-  const repRut = representative?.rut || '12.691.519-5';
+  const orgName   = settings?.name || 'Organización';
+  const orgRut    = settings?.rut  || '';
+  const repName   = representative?.name || '';
   const signatureUrl = representative?.signatureUrl;
+  const courseName   = course.nameVisible || course.senceData?.nombreCurso || '';
+  const hours        = course.senceData?.horasActividad;
+  const emisionDate  = formatDateES(course.senceData?.fecEmision);
+  const initials     = orgName.slice(0, 2).toUpperCase();
 
-  // Custom background if provided in course
+  // Navy / green / orange — palette from client designs
+  const NAVY   = '#1B2F5B';
+  const GREEN  = '#7DC240';
+  const ORANGE = '#F5A623';
+
   const backgroundStyle = course.customAssetUrl ? {
     backgroundImage: `url(${course.customAssetUrl})`,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat'
+    backgroundRepeat: 'no-repeat',
   } : {};
 
-  // If we have a custom template blob and the mode is custom, use it
+  // ── Custom Word template ──────────────────────────────────────────────────────
   if (templateId === 'custom' && templateBlob) {
-    return <CustomDocxTemplate 
-      templateBlob={templateBlob} 
-      enrollment={enrollment}
-      course={course}
-      settings={settings}
-      representative={representative}
-      backgroundStyle={backgroundStyle}
-    />;
+    return (
+      <CustomDocxTemplate
+        templateBlob={templateBlob}
+        enrollment={enrollment}
+        course={course}
+        settings={settings}
+        representative={representative}
+        backgroundStyle={backgroundStyle}
+      />
+    );
   }
 
-  // Built-in Templates Logic
+  // ── TEMPLATE "diploma" — Foto 2: Elegante Oscuro ─────────────────────────────
   if (templateId === 'diploma') {
     return (
-      <div id={`cert-${enrollment.id}`} className="w-[1123px] h-[794px] bg-white border-[16px] border-[#009688] p-16 relative overflow-hidden flex flex-col items-center justify-center text-center font-sans printable-area shadow-2xl mx-auto my-0" style={backgroundStyle}>
-        <div className="absolute top-0 left-0 w-64 h-64 bg-[#009688] opacity-5 -translate-x-1/2 -translate-y-1/2 rotate-45" />
-        <div className="absolute bottom-0 right-0 w-64 h-64 bg-[#009688] opacity-5 translate-x-1/2 translate-y-1/2 rotate-45" />
-        
-        <div className="space-y-8 z-10">
-          <div className="text-[#009688] font-serif text-2xl tracking-[0.2em] font-light">DIPLOMA DE EXCELENCIA</div>
-          <h1 className="text-7xl font-bold text-gray-900 tracking-tight leading-tight">Certificado de Participación</h1>
-          
-          <div className="text-lg text-gray-400 mt-12 tracking-widest italic font-serif">Otorgado a:</div>
-          <div className="text-5xl font-black text-[#009688] uppercase border-b-4 border-[#ccf2ef] px-12 pb-4 inline-block mt-4">
-             {enrollment.studentName}
-          </div>
-          
-          <div className="text-xl text-gray-600 mt-12 font-medium max-w-2xl mx-auto leading-relaxed">
-            Por haber completado satisfactoriamente el curso de formación profesional en 
-            <span className="font-bold block text-2xl mt-2 text-gray-900 uppercase">{course.nameVisible}</span>
+      <div
+        id={`cert-${enrollment.id}`}
+        className="w-[794px] h-[1123px] flex flex-col items-center font-sans shadow-2xl mx-auto my-0 printable-area relative overflow-hidden"
+        style={{ backgroundColor: NAVY }}
+      >
+        {/* Green frame */}
+        <div className="absolute inset-[10px] rounded pointer-events-none"
+             style={{ border: `2px solid ${GREEN}` }} />
+
+        <div className="flex flex-col items-center justify-between h-full px-16 py-12 z-10 w-full">
+
+          {/* ─ TOP ─ */}
+          <div className="flex flex-col items-center w-full">
+            {/* Logo circle */}
+            <div className="h-24 w-24 rounded-full flex flex-col items-center justify-center mb-4"
+                 style={{ border: `2px solid ${ORANGE}` }}>
+              {settings?.logoUrl ? (
+                <img src={settings.logoUrl} className="h-16 w-16 object-contain rounded-full" alt="Logo" />
+              ) : (
+                <>
+                  <span className="text-2xl font-black text-white leading-none">{initials}</span>
+                  <span className="text-[6px] font-black uppercase tracking-widest mt-0.5"
+                        style={{ color: ORANGE }}>OTEC · SENCE</span>
+                </>
+              )}
+            </div>
+
+            <div className="text-[10px] font-black text-white uppercase tracking-[0.25em]">{orgName}</div>
+            {orgRut && (
+              <div className="text-[8px] mt-0.5 tracking-widest" style={{ color: 'rgba(255,255,255,0.4)' }}>{orgRut}</div>
+            )}
+
+            {/* Diamond divider */}
+            <div className="flex items-center space-x-3 my-4">
+              <div className="h-px w-20" style={{ backgroundColor: ORANGE }} />
+              <div className="h-2 w-2 rotate-45" style={{ backgroundColor: ORANGE }} />
+              <div className="h-px w-20" style={{ backgroundColor: ORANGE }} />
+            </div>
+
+            {/* Title */}
+            <div className="text-[78px] font-black text-white leading-none tracking-tight">CERTIFI</div>
+            <div className="text-[78px] font-black leading-none tracking-tight" style={{ color: GREEN }}>CADO</div>
+            <div className="text-[10px] font-bold tracking-[0.5em] mt-2"
+                 style={{ color: 'rgba(255,255,255,0.45)' }}>DE APROBACIÓN</div>
+
+            {/* Divider */}
+            <div className="flex items-center space-x-3 mt-5">
+              <div className="h-px w-32" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }} />
+              <div className="h-1.5 w-1.5 rotate-45" style={{ backgroundColor: ORANGE }} />
+              <div className="h-px w-32" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }} />
+            </div>
           </div>
 
-          <div className="grid grid-cols-3 w-full mt-24">
-             <div className="flex flex-col items-center">
-                {signatureUrl && <img src={signatureUrl} alt="Firma" className="h-16 object-contain mb-2" />}
-                <div className="border-t border-gray-300 pt-2 w-48 text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-tight">
-                  {repName}<br/>{repRut}
+          {/* ─ MIDDLE ─ */}
+          <div className="flex flex-col items-center w-full mt-4">
+            <p className="text-sm italic mb-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              certifica que el participante
+            </p>
+            <div className="text-[34px] font-black italic text-white text-center leading-snug mb-2">
+              {enrollment.studentName}
+            </div>
+            <p className="text-sm italic mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              ha completado satisfactoriamente el programa
+            </p>
+
+            {/* Course name */}
+            <div className="w-full border rounded-lg px-8 py-4 mb-5 text-center"
+                 style={{ borderColor: ORANGE, backgroundColor: 'rgba(245,166,35,0.07)' }}>
+              <div className="text-base font-black text-white leading-snug">{courseName}</div>
+            </div>
+
+            {/* Info cards */}
+            <div className="grid grid-cols-3 gap-3 w-full">
+              <div className="rounded-xl p-4 text-center" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="text-3xl font-black leading-none mb-0.5" style={{ color: GREEN }}>
+                  {hours ?? '—'}
                 </div>
-             </div>
-             <div className="flex flex-col items-center justify-center">
-                <QRCodeSVG value={verificationUrl} size={80} level="M" />
-                <div className="text-[10px] text-gray-400 mt-2 font-mono italic">{enrollment.id}</div>
-             </div>
-             <div className="flex flex-col items-center">
-                <div className="h-24 w-24 opacity-80 rotate-12 pointer-events-none flex items-center justify-center mb-2">
-                   <div className="border-4 border-double border-[#312e81]/40 rounded-full h-full w-full bg-white/10 backdrop-blur-[1px] p-4 flex flex-col items-center justify-center text-center shadow-[inset_0_0_20px_rgba(49,46,129,0.05)]">
-                      <p className="text-[7px] font-black text-[#312e81] uppercase leading-tight">{settings?.useCustomStamp ? settings.customStampName : orgName}</p>
-                      <div className="h-px w-full bg-[#312e81]/30 my-1"></div>
-                      <p className="text-[5px] text-[#3730a3]/60 font-bold uppercase tracking-tighter">CERTIFICACIÓN</p>
-                   </div>
+                <div className="text-[7px] font-black uppercase tracking-widest text-white">HORAS LECTIVAS</div>
+                <div className="text-[7px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>Duración total</div>
+              </div>
+              <div className="rounded-xl p-4 text-center" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="text-sm font-black text-white mb-0.5">E-Learning</div>
+                <div className="text-[7px] font-black uppercase tracking-widest" style={{ color: GREEN }}>MODALIDAD</div>
+                <div className="text-[7px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>Aula Virtual</div>
+              </div>
+              <div className="rounded-xl p-4 text-center" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="text-sm font-black text-white mb-0.5">{emisionDate}</div>
+                <div className="text-[7px] font-black uppercase tracking-widest" style={{ color: ORANGE }}>EMISIÓN</div>
+              </div>
+            </div>
+
+            <p className="text-[11px] italic text-center max-w-md leading-relaxed mt-5"
+               style={{ color: 'rgba(255,255,255,0.35)' }}>
+              {course.description ||
+               'El presente certificado se otorga en reconocimiento al compromiso y dedicación demostrados durante el proceso de aprendizaje.'}
+            </p>
+          </div>
+
+          {/* ─ BOTTOM ─ */}
+          <div className="w-full mt-4">
+            {/* Stamp */}
+            <div className="flex justify-center mb-4">
+              <div className="h-14 w-14 rounded-full flex items-center justify-center"
+                   style={{ border: `2px dashed rgba(125,194,64,0.35)` }}>
+                {settings?.logoUrl ? (
+                  <img src={settings.logoUrl} className="h-9 w-9 object-contain rounded-full" alt="" />
+                ) : (
+                  <span className="text-[7px] font-black uppercase text-center leading-tight px-1"
+                        style={{ color: 'rgba(255,255,255,0.35)' }}>{initials}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Signature lines */}
+            <div className="flex justify-around">
+              <div className="flex flex-col items-center">
+                {signatureUrl && (
+                  <img src={signatureUrl} className="h-10 object-contain mb-1 brightness-200 invert" alt="Firma" />
+                )}
+                <div className="h-px w-32 mb-1" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} />
+                <div className="text-[7px] uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                  DIRECTOR ACADÉMICO
                 </div>
-                <div className="border-t border-gray-300 pt-2 w-48 text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-none mt-2">Sello de Validación Digital</div>
-             </div>
+                <div className="text-[9px] font-black text-white">{repName}</div>
+              </div>
+              <div className="flex flex-col items-center">
+                <div className="h-10 mb-1" />
+                <div className="h-px w-32 mb-1" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} />
+                <div className="text-[7px] uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                  REPRESENTANTE LEGAL
+                </div>
+                <div className="text-[9px] font-black text-white">{repName}</div>
+              </div>
+            </div>
+
+            {/* Footer line */}
+            <div className="text-center mt-5">
+              <div className="text-[8px] font-mono" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                {settings?.lema ? `${settings.lema}  ·  ` : ''}{verificationUrl}
+              </div>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  // ── TEMPLATE "classic" — Foto 3: Franja Superior ─────────────────────────────
   if (templateId === 'classic') {
     return (
-      <div id={`cert-${enrollment.id}`} className="w-[1123px] h-[794px] bg-[#fcfcf9] border-[30px] border-[#2c3e50] p-20 relative overflow-hidden flex flex-col items-center text-center font-serif printable-area shadow-2xl mx-auto my-0" style={backgroundStyle}>
-        <div className="absolute inset-0 border-[2px] border-[#d4af37] m-4 pointer-events-none" />
-        
-        <div className="space-y-10 z-10">
-          <div className="text-[#b8860b] text-xl tracking-[0.3em] font-medium">RECONOCIMIENTO ACADÉMICO</div>
-          <h1 className="text-6xl font-black text-[#2c3e50] uppercase tracking-tighter italic">Diploma Honorífico</h1>
-          
-          <p className="text-xl text-gray-600 mt-12 max-w-3xl leading-relaxed italic">
-            La institución certifica solemnemente que el alumno(a)
-          </p>
-          
-          <div className="text-5xl font-serif text-[#2c3e50] border-b-2 border-gray-200 px-8 pb-3 min-w-[500px]">
-             {enrollment.studentName}
-          </div>
-          
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed mt-8">
-            ha demostrado excelencia en los estudios integrales sobre:
-            <span className="block font-black text-3xl mt-4 text-[#2c3e50] tracking-tight">{course.nameVisible}</span>
-          </p>
+      <div
+        id={`cert-${enrollment.id}`}
+        className="w-[794px] h-[1123px] flex flex-col font-sans shadow-2xl mx-auto my-0 printable-area overflow-hidden"
+      >
+        {/* ─ TOP DARK HEADER ─ */}
+        <div className="relative flex flex-col items-center justify-center overflow-hidden shrink-0"
+             style={{ backgroundColor: NAVY, height: '370px' }}>
 
-          <div className="flex justify-around w-full mt-24 items-end">
-             <div className="flex flex-col items-center">
-                {signatureUrl && <img src={signatureUrl} alt="Firma" className="h-20 object-contain mb-2 grayscale" />}
-                <div className="border-t border-gray-400 pt-3 w-64 text-xs text-gray-700 font-bold uppercase tracking-wider">
-                  {repName}<br/>Dirección Académica
-                </div>
-             </div>
-             <div className="flex flex-col items-center">
-                <QRCodeSVG value={verificationUrl} size={90} level="H" bgColor="#fcfcf9" />
-                <div className="text-[10px] text-gray-400 mt-3 font-mono opacity-50">{enrollment.id}</div>
-             </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+          {/* Decorative circles */}
+          <div className="absolute -left-16 top-1/2 -translate-y-1/2 h-52 w-52 rounded-full pointer-events-none"
+               style={{ border: `2px solid rgba(125,194,64,0.18)` }} />
+          <div className="absolute -right-10 top-1/4 h-40 w-40 rounded-full pointer-events-none"
+               style={{ border: `2px solid rgba(255,255,255,0.08)` }} />
 
-  if (templateId === 'tech') {
-    return (
-      <div id={`cert-${enrollment.id}`} className="w-[1123px] h-[794px] bg-[#020617] p-20 relative overflow-hidden flex flex-col items-start justify-center font-mono printable-area shadow-2xl mx-auto my-0" style={backgroundStyle}>
-        <div className="absolute top-0 right-0 w-1/3 h-full bg-[#10b981]/5 -skew-x-12 translate-x-20" />
-        <div className="absolute top-0 right-0 p-12 border-t-[40px] border-r-[40px] border-[#10b981]/20 w-80 h-80" />
-        
-        <div className="space-y-12 z-10 w-full">
-          <div>
-            <div className="inline-block px-4 py-1 bg-[#10b981] text-[#020617] text-xs font-black uppercase tracking-tighter mb-4">Verification Level: HIGH</div>
-            <h1 className="text-8xl font-black text-white tracking-widest uppercase leading-none italic">Verified<br/><span className="text-[#10b981]">Certificate</span></h1>
-          </div>
-          
-          <div className="space-y-4">
-            <div className="text-[#10b981]/50 text-sm font-bold uppercase tracking-[0.5em]">&gt; Subject:</div>
-            <div className="text-4xl font-bold text-white uppercase border-l-8 border-[#10b981] pl-8 py-2">
-               {course.nameVisible}
-            </div>
+          {/* Tiny org text */}
+          <div className="absolute top-5 left-0 right-0 text-center">
+            <span className="text-[7px] tracking-[0.3em] uppercase"
+                  style={{ color: 'rgba(255,255,255,0.35)' }}>
+              {orgName} · OTEC ACREDITADO SENCE
+            </span>
           </div>
 
-          <div className="flex items-center space-x-12">
-            <div>
-              <div className="text-[#10b981]/50 text-xs font-bold uppercase tracking-widest mb-1">Holder:</div>
-              <div className="text-3xl font-black text-white">{enrollment.studentName}</div>
-            </div>
-            <div className="h-10 w-px bg-[#1e293b]" />
-            <div>
-              <div className="text-[#10b981]/50 text-xs font-bold uppercase tracking-widest mb-1">Identity:</div>
-              <div className="text-xl font-medium text-[#94a3b8]">{formatRut(enrollment.studentRut)}</div>
-            </div>
-          </div>
+          {/* Main title */}
+          <div className="text-[84px] font-black text-white leading-none tracking-tight pb-1">CERTIFI</div>
+          <div className="text-[84px] font-black leading-none tracking-tight" style={{ color: GREEN }}>CADO</div>
+          <div className="text-[10px] font-bold tracking-[0.5em] mt-2"
+               style={{ color: 'rgba(255,255,255,0.4)' }}>DE APROBACIÓN</div>
 
-          <div className="flex items-end justify-between w-full pt-12 border-t border-[#0f172a]">
-             <div className="space-y-4">
-                <div className="flex items-center space-x-6">
-                   {signatureUrl && <img src={signatureUrl} alt="Firma" className="h-12 object-contain invert brightness-200" />}
-                   <div>
-                      <div className="text-[#10b981] text-[10px] font-black uppercase">{repName}</div>
-                      <div className="text-[#475569] text-[8px] font-bold uppercase tracking-widest">Authority Signer HL-9</div>
-                   </div>
-                </div>
-                <div className="text-[10px] text-[#334155] max-w-sm">
-                   CERTIFIED BY {orgName.toUpperCase()} PROTOCOL V4.2.0. SECURED WITH BLOCKCHAIN-READY VALIDATION HASH.
-                </div>
-             </div>
-             <div className="flex flex-col items-end">
-                <div className="p-2 bg-white rounded-lg">
-                  <QRCodeSVG value={verificationUrl} size={100} level="M" />
-                </div>
-                <div className="text-[10px] text-[#10b981] mt-4 font-mono font-black animate-pulse tracking-tighter">AUTHENTICATION ID: {enrollment.id}</div>
-             </div>
+          {/* Green diagonal stripe */}
+          <div className="absolute bottom-0 left-0 right-0 overflow-hidden" style={{ height: '44px' }}>
+            <div style={{
+              width: '110%',
+              height: '36px',
+              backgroundColor: GREEN,
+              transform: 'skewY(-1.8deg)',
+              transformOrigin: 'left',
+              marginTop: '16px',
+              marginLeft: '-5%',
+            }} />
           </div>
         </div>
-      </div>
-    );
-  }
 
-  if (templateId === 'minimal') {
-    return (
-      <div id={`cert-${enrollment.id}`} className="w-[794px] h-[1123px] bg-white p-24 relative overflow-hidden flex flex-col font-sans printable-area shadow-2xl mx-auto my-0" style={backgroundStyle}>
-        <div className="h-1 w-24 bg-black mb-12" />
-        
-        <div className="space-y-16 flex-1">
-          <div className="space-y-4">
-            <h1 className="text-6xl font-light text-[#0f172a] tracking-tighter">Reconocimiento<br/><span className="font-black italic">Académico</span></h1>
-            <p className="text-[#94a3b8] text-lg font-medium tracking-tight">Emitido de acuerdo a los protocolos institucionales de formación.</p>
-          </div>
+        {/* ─ WHITE BODY ─ */}
+        <div className="flex-1 bg-white flex flex-col px-12 pt-10 pb-6 overflow-hidden">
 
-          <div className="space-y-8">
-            <div className="space-y-2">
-              <span className="text-[10px] font-black uppercase text-[#cbd5e1] tracking-[0.2em]">Candidato</span>
-              <div className="text-5xl font-black text-[#0f172a] tracking-tight leading-none">{enrollment.studentName}</div>
-              <div className="text-lg text-[#64748b] font-mono italic">{formatRut(enrollment.studentRut)}</div>
+          {/* Participant block */}
+          <div className="border-l-4 pl-5 mb-7" style={{ borderColor: GREEN }}>
+            <div className="text-[8px] font-black uppercase tracking-widest mb-1"
+                 style={{ color: '#94a3b8' }}>PARTICIPANTE</div>
+            <div className="text-[29px] font-black leading-tight" style={{ color: NAVY }}>
+              {enrollment.studentName}
             </div>
-
-            <div className="space-y-2">
-              <span className="text-[10px] font-black uppercase text-[#cbd5e1] tracking-[0.2em]">Formación</span>
-              <div className="text-2xl font-bold text-[#0f172a] tracking-tight uppercase leading-snug">{course.nameVisible}</div>
+            <div className="text-[8px] font-black uppercase tracking-widest mt-2 mb-1"
+                 style={{ color: '#94a3b8' }}>PROGRAMA FORMATIVO</div>
+            <div className="text-base font-black leading-snug" style={{ color: GREEN }}>
+              {courseName}
             </div>
           </div>
 
-          <p className="text-[#475569] text-sm italic font-medium leading-relaxed max-w-md">
-            Este documento formaliza la aprobación integral de los contenidos impartidos por {orgName} durante el periodo lectivo vigente.
-          </p>
-        </div>
-
-        <div className="flex items-end justify-between pt-12 border-t border-[#f1f5f9]">
-           <div className="space-y-6">
-              <div className="flex items-center space-x-6">
-                 {signatureUrl && <img src={signatureUrl} alt="Firma" className="h-14 object-contain opacity-80" />}
-                 <div>
-                    <div className="text-[#0f172a] text-[11px] font-black uppercase leading-none">{repName}</div>
-                    <div className="text-[#94a3b8] text-[9px] font-bold uppercase mt-1 tracking-widest">{repRut}</div>
-                 </div>
+          {/* Info cards */}
+          <div className="grid grid-cols-3 gap-4 mb-7">
+            <div className="rounded-xl p-4 text-center" style={{ backgroundColor: NAVY }}>
+              <div className="text-[30px] font-black leading-none mb-0.5" style={{ color: GREEN }}>
+                {hours ?? '—'}
               </div>
-              <div className="text-[8px] text-[#cbd5e1] font-black uppercase tracking-[0.2em]">Validado por {orgName}</div>
-           </div>
-           <div className="flex flex-col items-end">
-              <QRCodeSVG value={verificationUrl} size={80} level="M" />
-              <div className="text-[9px] text-[#cbd5e1] mt-2 font-mono">{enrollment.id}</div>
-           </div>
+              <div className="text-[7px] font-black uppercase tracking-widest text-white">HORAS LECTIVAS</div>
+              <div className="text-[7px] mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>Duración total del programa</div>
+            </div>
+            <div className="rounded-xl p-4 text-center border-2" style={{ borderColor: GREEN }}>
+              <div className="text-sm font-black mb-0.5" style={{ color: NAVY }}>E-Learning</div>
+              <div className="text-[7px] font-black uppercase tracking-widest" style={{ color: GREEN }}>MODALIDAD</div>
+              <div className="text-[7px] mt-0.5" style={{ color: '#94a3b8' }}>Aula Virtual</div>
+            </div>
+            <div className="rounded-xl p-4 text-center border-t-4" style={{ borderColor: ORANGE }}>
+              <div className="text-sm font-black mb-0.5" style={{ color: NAVY }}>{emisionDate}</div>
+              <div className="text-[7px] font-black uppercase tracking-widest" style={{ color: ORANGE }}>FECHA EMISIÓN</div>
+              <div className="text-[7px] mt-0.5" style={{ color: '#94a3b8' }}>
+                N.° {enrollment.id.slice(0, 8).toUpperCase()}
+              </div>
+            </div>
+          </div>
+
+          {/* Description */}
+          <p className="text-[11px] italic text-center leading-relaxed mb-6 max-w-lg mx-auto"
+             style={{ color: '#94a3b8' }}>
+            {course.description ||
+             'El presente certificado acredita la aprobación del programa formativo en reconocimiento al esfuerzo y dedicación demostrados.'}
+          </p>
+
+          <div className="flex-1" />
+
+          {/* Signatures */}
+          <div className="flex items-end justify-between mb-5">
+            <div className="flex flex-col items-start">
+              {signatureUrl && (
+                <img src={signatureUrl} className="h-10 object-contain mb-1" alt="Firma" />
+              )}
+              <div className="h-px w-36 mb-1" style={{ backgroundColor: '#e2e8f0' }} />
+              <div className="text-[7px] uppercase tracking-widest" style={{ color: '#94a3b8' }}>
+                DIRECTOR ACADÉMICO
+              </div>
+              <div className="text-[9px] font-black" style={{ color: NAVY }}>{repName}</div>
+            </div>
+
+            {/* Stamp */}
+            <div className="flex flex-col items-center">
+              <div className="h-16 w-16 rounded-full flex items-center justify-center"
+                   style={{ border: '2px dashed rgba(27,47,91,0.2)' }}>
+                {settings?.logoUrl ? (
+                  <img src={settings.logoUrl} className="h-10 w-10 object-contain rounded-full" alt="" />
+                ) : (
+                  <span className="text-[7px] font-black uppercase text-center leading-tight"
+                        style={{ color: 'rgba(27,47,91,0.3)' }}>{initials}</span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-col items-end">
+              <div className="h-10 mb-1" />
+              <div className="h-px w-36 mb-1" style={{ backgroundColor: '#e2e8f0' }} />
+              <div className="text-[7px] uppercase tracking-widest" style={{ color: '#94a3b8' }}>
+                REPRESENTANTE LEGAL
+              </div>
+              <div className="text-[9px] font-black" style={{ color: NAVY }}>{repName}</div>
+            </div>
+          </div>
+
+          {/* Footer bar */}
+          <div className="rounded-xl px-6 py-2.5 text-center" style={{ backgroundColor: '#f8fafc' }}>
+            <span className="text-[8px] font-mono" style={{ color: '#94a3b8' }}>
+              {settings?.lema ? `${settings.lema}  ·  ` : ''}{verificationUrl}
+            </span>
+          </div>
         </div>
       </div>
     );
   }
 
-  // SENCE / Standard Certificate Template (Default)
+  // ── DEFAULT "modern" — Foto 1: Panel Lateral ─────────────────────────────────
   return (
-    <div id={`cert-${enrollment.id}`} className="w-[794px] h-[1123px] bg-white p-12 relative font-sans shadow-xl border border-gray-100 mx-auto my-0 printable-area overflow-hidden" style={backgroundStyle}>
-      <div className="border-2 border-black flex flex-col h-full">
-        {/* Header content ... same as before */}
-        <div className="border-b-2 border-black p-4 flex justify-between items-start">
-          <div className="h-16 w-32 border border-gray-300 flex items-center justify-center overflow-hidden bg-[#f8fafc]">
-             {settings?.logoUrl ? (
-               <img src={settings.logoUrl} alt="Logo" className="h-full w-full object-contain" />
-             ) : (
-               <span className="text-[10px] font-bold text-gray-400 italic text-center p-2">LOGO {orgName.slice(0, 10).toUpperCase()}</span>
-             )}
-          </div>
-          <div className="text-center flex-1 mx-4">
-            <h2 className="text-[11px] font-bold leading-tight uppercase px-4 py-2">
-              Certificado de Asistencia Actividad OTEC, CFT o Entidad Niveladora de Estudios, 
-              Imputada en forma total o parcial a franquicia tributaria de capacitación
-            </h2>
+    <div
+      id={`cert-${enrollment.id}`}
+      className="w-[794px] h-[1123px] flex overflow-hidden font-sans shadow-2xl mx-auto my-0 printable-area"
+    >
+      {/* ─ LEFT SIDEBAR ─ */}
+      <div className="shrink-0 flex flex-col py-9 px-6 overflow-hidden"
+           style={{ width: '220px', backgroundColor: NAVY }}>
+
+        {/* Logo circle */}
+        <div className="flex justify-center mb-5">
+          <div className="h-[72px] w-[72px] rounded-full flex flex-col items-center justify-center"
+               style={{ border: `2px solid ${GREEN}` }}>
+            {settings?.logoUrl ? (
+              <img src={settings.logoUrl} className="h-12 w-12 object-contain rounded-full" alt="Logo" />
+            ) : (
+              <>
+                <span className="text-2xl font-black text-white leading-none">{initials}</span>
+                <span className="text-[6px] font-black uppercase tracking-widest mt-0.5"
+                      style={{ color: GREEN }}>OTEC SENCE</span>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Content Section */}
-        <div className="p-6 space-y-6">
-          <div className="flex justify-center space-x-8 text-sm font-bold">
-            <div className="flex items-center space-x-2">
-              <div className="h-5 w-5 border-2 border-black flex items-center justify-center">X</div>
-              <span className="text-xs uppercase tracking-tighter">Actividad dentro del año calendario</span>
+        {/* Org name */}
+        <div className="text-center mb-5">
+          <div className="text-[9px] font-black text-white uppercase tracking-widest leading-snug">{orgName}</div>
+          {orgRut && (
+            <div className="text-[7px] mt-0.5" style={{ color: GREEN }}>{orgRut}</div>
+          )}
+        </div>
+
+        <div className="h-px mb-5" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }} />
+
+        {/* Info sections */}
+        <div className="space-y-4 flex-1">
+          {hours && (
+            <div className="text-center">
+              <div className="text-[7px] font-bold uppercase tracking-widest mb-0.5"
+                   style={{ color: 'rgba(255,255,255,0.4)' }}>DURACIÓN</div>
+              <div className="text-[38px] font-black leading-none" style={{ color: GREEN }}>{hours}</div>
+              <div className="text-[7px] uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.45)' }}>HORAS</div>
+            </div>
+          )}
+
+          <div className="h-px" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
+
+          <div className="text-center">
+            <div className="text-[7px] font-bold uppercase tracking-widest mb-0.5"
+                 style={{ color: 'rgba(255,255,255,0.4)' }}>MODALIDAD</div>
+            <div className="text-[11px] font-black text-white">E-Learning</div>
+            <div className="text-[8px]" style={{ color: 'rgba(255,255,255,0.4)' }}>Aula Virtual</div>
+          </div>
+
+          <div className="h-px" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
+
+          <div className="text-center">
+            <div className="text-[7px] font-bold uppercase tracking-widest mb-0.5"
+                 style={{ color: 'rgba(255,255,255,0.4)' }}>EMISIÓN</div>
+            <div className="text-[11px] font-bold text-white">{emisionDate}</div>
+          </div>
+
+          {settings?.lema && (
+            <>
+              <div className="h-px" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
+              <div className="text-center">
+                <div className="text-[7px] font-bold uppercase tracking-widest mb-1"
+                     style={{ color: 'rgba(255,255,255,0.4)' }}>CONTACTO</div>
+                <div className="text-[8px] leading-relaxed" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                  {settings.lema}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* QR at bottom */}
+        <div className="mt-5 rounded-xl p-3 flex flex-col items-center"
+             style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
+          <div className="bg-white rounded-lg p-1.5">
+            <QRCodeSVG value={verificationUrl} size={64} level="M" />
+          </div>
+          <div className="text-[6px] mt-2 font-mono text-center"
+               style={{ color: 'rgba(255,255,255,0.3)' }}>verificar en línea</div>
+        </div>
+      </div>
+
+      {/* ─ RIGHT CONTENT ─ */}
+      <div className="flex-1 bg-white flex flex-col px-10 py-9 overflow-hidden">
+
+        {/* Top label */}
+        <div className="text-[8px] uppercase tracking-[0.3em] mb-4" style={{ color: '#94a3b8' }}>
+          CERTIFICADO DE APROBACIÓN
+        </div>
+
+        {/* Main title */}
+        <div className="mb-5">
+          <div className="font-black leading-none tracking-tight" style={{ fontSize: '68px', color: NAVY }}>CERTIFI</div>
+          <div className="font-black leading-none tracking-tight" style={{ fontSize: '68px', color: GREEN }}>CADO</div>
+          <div className="flex space-x-1 mt-3">
+            <div className="h-1 w-16 rounded-full" style={{ backgroundColor: GREEN }} />
+            <div className="h-1 w-6 rounded-full"  style={{ backgroundColor: ORANGE }} />
+            <div className="h-1 w-3 rounded-full"  style={{ backgroundColor: '#e2e8f0' }} />
+          </div>
+        </div>
+
+        <p className="text-sm italic mb-3" style={{ color: '#94a3b8' }}>
+          Certifica que el/la participante
+        </p>
+
+        {/* Student name */}
+        <div className="font-black leading-tight mb-2" style={{ fontSize: '27px', color: NAVY }}>
+          {enrollment.studentName}
+        </div>
+
+        <p className="text-sm italic mb-5" style={{ color: '#94a3b8' }}>
+          ha completado satisfactoriamente el curso
+        </p>
+
+        {/* Course name */}
+        <div className="border-l-4 rounded-r-xl px-5 py-4 mb-5"
+             style={{ borderColor: GREEN, backgroundColor: 'rgba(125,194,64,0.08)' }}>
+          <div className="text-base font-black leading-snug" style={{ color: '#1a5c2a' }}>
+            {courseName}
+          </div>
+        </div>
+
+        {/* Badges */}
+        <div className="flex space-x-2 mb-5">
+          {course.isSence && (
+            <span className="px-3 py-1 text-white text-[9px] font-black uppercase tracking-widest rounded"
+                  style={{ backgroundColor: NAVY }}>SENCE</span>
+          )}
+          <span className="px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded border"
+                style={{ color: '#64748b', borderColor: '#cbd5e1' }}>ACREDITADO</span>
+        </div>
+
+        {/* Description */}
+        <p className="text-[11px] leading-relaxed" style={{ color: '#94a3b8' }}>
+          {course.description ||
+           'Reconociendo el esfuerzo y dedicación demostrados durante el proceso de aprendizaje profesional.'}
+        </p>
+
+        <div className="flex-1" />
+
+        {/* Footer */}
+        <div className="border-t pt-5" style={{ borderColor: '#f1f5f9' }}>
+          <div className="flex items-end justify-between mb-4">
+
+            {/* Stamp */}
+            <div className="flex flex-col items-center">
+              <div className="h-14 w-14 rounded-full flex items-center justify-center"
+                   style={{ border: '2px dashed rgba(27,47,91,0.2)' }}>
+                {settings?.logoUrl ? (
+                  <img src={settings.logoUrl} className="h-9 w-9 object-contain rounded-full" alt="" />
+                ) : (
+                  <span className="text-[7px] font-black uppercase text-center leading-tight"
+                        style={{ color: 'rgba(27,47,91,0.3)' }}>{initials}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Signature */}
+            <div className="flex flex-col items-center">
+              {signatureUrl && (
+                <img src={signatureUrl} className="h-10 object-contain mb-1" alt="Firma" />
+              )}
+              <div className="h-px w-36 mb-1" style={{ backgroundColor: '#e2e8f0' }} />
+              <div className="text-[7px] uppercase tracking-widest"
+                   style={{ color: '#94a3b8' }}>REPRESENTANTE LEGAL</div>
+              <div className="text-[9px] font-black" style={{ color: '#334155' }}>{repName}</div>
             </div>
           </div>
 
-          <div className="text-[10px] text-center leading-relaxed italic px-8 text-[#475569]">
-            Se extiende el presente certificado de asistencia correspondiente a la actividad de capacitación que a continuación se señala:
+          {/* Verification */}
+          <div className="text-center">
+            <div className="text-[7px] uppercase tracking-widest mb-0.5" style={{ color: '#cbd5e1' }}>
+              VERIFICA LA AUTENTICIDAD DE ESTE CERTIFICADO
+            </div>
+            <div className="text-[8px] font-mono" style={{ color: '#94a3b8' }}>{verificationUrl}</div>
           </div>
-
-          <table className="w-full border-collapse border-y-2 border-black text-[10px]">
-            <tbody>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold w-1/2 bg-[#f8fafc] uppercase tracking-tighter">Razón social OTEC, CFT o entidad niveladora</td>
-                <td className="border-b border-black p-2 uppercase font-medium">{settings?.name || course.senceData?.empresa || 'Laboralcap E.I.R.L'}</td>
-              </tr>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold bg-[#f8fafc] uppercase tracking-tighter">RUT OTEC, CFT o entidad niveladora</td>
-                <td className="border-b border-black p-2 font-mono">{orgRut}</td>
-              </tr>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold bg-[#f8fafc] uppercase tracking-tighter">Razón social empresa cliente</td>
-                <td className="border-b border-black p-2 uppercase font-medium">{course.senceData?.empresa || '-'}</td>
-              </tr>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold bg-[#f8fafc] uppercase tracking-tighter">RUT empresa cliente</td>
-                <td className="border-b border-black p-2 font-mono">{course.senceData?.rutEmpresa || '-'}</td>
-              </tr>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold bg-[#f8fafc] uppercase tracking-tighter">Nombre de la actividad</td>
-                <td className="border-b border-black p-2 font-black uppercase text-sm">{course.nameVisible}</td>
-              </tr>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold bg-[#f8fafc] uppercase tracking-tighter">Fecha inicio / término</td>
-                <td className="border-b border-black p-2 font-medium">
-                  {course.senceData?.fecInicio ? format(new Date(course.senceData.fecInicio), 'dd-MM-yyyy') : '-'} al {course.senceData?.fecTermino ? format(new Date(course.senceData.fecTermino), 'dd-MM-yyyy') : '-'}
-                </td>
-              </tr>
-              <tr>
-                <td className="border-r border-b border-black p-2 font-bold bg-[#f8fafc] uppercase tracking-tighter">Nº de horas cronológicas</td>
-                <td className="border-b border-black p-2 font-bold">{course.senceData?.horasActividad || 0} Horas</td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* Participant Table */}
-          <div className="space-y-1">
-             <div className="text-[10px] font-black uppercase tracking-[0.2em] ml-1 mb-2 text-[#94a3b8] font-mono">Dato Individual de Alumno:</div>
-             <table className="w-full border-collapse border-2 border-black text-[10px] text-center">
-                <thead className="bg-[#f0f0f0]">
-                   <tr>
-                      <th className="border border-black p-2 w-8 tracking-tighter">POS</th>
-                      <th className="border border-black p-2 uppercase tracking-tighter">RUT ALUMNO</th>
-                      <th className="border border-black p-2 text-left uppercase tracking-tighter">Nombre Completo Alumno</th>
-                      <th className="border border-black p-2 w-16 tracking-tighter">EV. FINAL</th>
-                      <th className="border border-black p-2 w-20 tracking-tighter">ESTADO</th>
-                      <th className="border border-black p-2 w-16 tracking-tighter">% ASIST.</th>
-                   </tr>
-                </thead>
-                <tbody>
-                   <tr className="bg-white">
-                      <td className="border border-black p-2">1</td>
-                      <td className="border border-black p-2 font-mono">{formatRut(enrollment.studentRut)}</td>
-                      <td className="border border-black p-2 text-left font-black uppercase leading-none">{enrollment.studentName}</td>
-                      <td className="border border-black p-2 font-bold">{enrollment.evaluation || '6.5'}</td>
-                      <td className="border border-black p-2 uppercase font-black">{enrollment.status}</td>
-                      <td className="border border-black p-2 font-bold">{enrollment.attendance || 100}%</td>
-                   </tr>
-                </tbody>
-             </table>
-          </div>
-
-          {/* Footer Section */}
-          <div className="grid grid-cols-2 gap-12 mt-12">
-             <div className="relative">
-                <div className="h-28 w-56 border-b-2 border-black flex items-end justify-center pb-2 relative">
-                   {signatureUrl && (
-                     <img src={signatureUrl} alt="Firma" className="absolute bottom-4 h-24 object-contain z-10" />
-                   )}
-                   {/* Electronic Stamp */}
-                   <div className="absolute -top-6 -right-12 h-36 w-36 opacity-90 rotate-6 pointer-events-none flex items-center justify-center">
-                     <svg viewBox="0 0 200 200" className="w-full h-full text-[#4338ca]/30">
-                        {/* Main Shapes based on style */}
-                        {settings?.stampStyle === 'square' ? (
-                          <rect x="10" y="10" width="180" height="180" rx="15" fill="white" fillOpacity="0.1" stroke="currentColor" strokeWidth="2.5" />
-                        ) : settings?.stampStyle === 'oval' ? (
-                          <ellipse cx="100" cy="100" rx="95" ry="70" fill="white" fillOpacity="0.1" stroke="currentColor" strokeWidth="2.5" />
-                        ) : (
-                          <>
-                            <circle cx="100" cy="100" r="95" fill="white" fillOpacity="0.1" stroke="currentColor" strokeWidth="2.5" strokeDasharray={settings?.stampStyle === 'circular_dots' ? "4 4" : "none"} />
-                            {settings?.stampStyle === 'circular_double' && (
-                              <circle cx="100" cy="100" r="85" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                            )}
-                            {settings?.stampStyle === 'circular_horizontal' && (
-                              <line x1="20" y1="100" x2="180" y2="100" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
-                            )}
-                          </>
-                        )}
-                        
-                        <defs>
-                          <path id="circlePathTop" d="M 25,100 A 75,75 0 0,1 175,100" />
-                          <path id="circlePathBottom" d="M 25,100 A 75,75 0 0,0 175,100" />
-                          <path id="ovalPathTop" d="M 25,100 A 75,55 0 0,1 175,100" />
-                          <path id="ovalPathBottom" d="M 25,100 A 75,55 0 0,0 175,100" />
-                        </defs>
-
-                        <text className="fill-[#4338ca] text-[10px] font-black uppercase tracking-tight">
-                          <textPath href={settings?.stampStyle === 'oval' ? "#ovalPathTop" : "#circlePathTop"} startOffset="50%" textAnchor="middle">
-                            {settings?.useCustomStamp ? (settings.customStampName || 'Nombre Timbre') : (settings?.name || 'Institución')}
-                          </textPath>
-                        </text>
-
-                        <text className="fill-[#4338ca]/60 text-[8px] font-black uppercase tracking-widest">
-                          <textPath href={settings?.stampStyle === 'oval' ? "#ovalPathBottom" : "#circlePathBottom"} startOffset="50%" textAnchor="middle">
-                            {settings?.lema || "CERTIFICACIÓN DIGITAL"}
-                          </textPath>
-                        </text>
-
-                        <text x="100" y={settings?.stampStyle === 'circular_horizontal' ? "92" : "105"} textAnchor="middle" className="fill-[#4338ca] text-[10px] font-black">
-                          {settings?.stampStyle === 'circular_horizontal' ? 'FIRMA' : (settings?.rut || '76.XXX.XXX-X')}
-                        </text>
-                        {settings?.stampStyle === 'circular_horizontal' && (
-                          <text x="100" y="112" textAnchor="middle" className="fill-[#4338ca]/40 text-[8px] font-bold">
-                            {settings?.rut || '76.XXX.XXX-X'}
-                          </text>
-                        )}
-                        <text x="100" y="145" textAnchor="middle" className="fill-[#a5b4fc] text-[5px] font-mono uppercase tracking-[0.3em] font-black">{enrollment.id.slice(0, 10)}</text>
-                     </svg>
-                   </div>
-                </div>
-                <div className="text-[9px] mt-4 font-black leading-tight uppercase text-[#1e293b]">
-                   Firma representante legal OTEC<br/>
-                   <span className="text-[#64748b] font-bold mt-1 inline-block">{repName} / {repRut}</span>
-                </div>
-             </div>
-             <div className="flex flex-col items-center justify-center">
-                <div className="p-2 border border-[#f1f5f9] rounded-xl shadow-sm bg-[#f8fafc]/50">
-                   <QRCodeSVG value={verificationUrl} size={110} level="M" />
-                </div>
-                <div className="text-[8px] mt-2 text-[#94a3b8] font-mono italic">ID Cert: {enrollment.id}</div>
-                <div className="text-[9px] mt-4 font-black bg-[#f1f5f9] px-3 py-1 rounded-full uppercase tracking-tighter">EMISIÓN: {course.senceData?.fecEmision ? format(new Date(course.senceData.fecEmision), 'dd-MM-yyyy') : format(new Date(), 'dd-MM-yyyy')}</div>
-             </div>
-          </div>
-        </div>
-
-        {/* Note */}
-        <div className="mt-auto p-4 border-t-2 border-black bg-[#f8fafc] text-[8px] italic leading-snug text-[#64748b]">
-          Actividad de capacitación financiada, total o parcialmente, a través de la franquicia tributaria de capacitación, administrada por el 
-          <b> Servicio Nacional de Capacitación y Empleo (SENCE)</b>. Actividad no conducente al otorgamiento de un título o grado académico. Para verificar la autenticidad, escanee el código QR adjunto.
         </div>
       </div>
     </div>
   );
 }
 
-function CustomDocxTemplate({ 
-  templateBlob, 
-  enrollment, 
-  course, 
-  settings, 
+// ── Custom DOCX template (unchanged) ─────────────────────────────────────────
+function CustomDocxTemplate({
+  templateBlob,
+  enrollment,
+  course,
+  settings,
   representative,
-  backgroundStyle 
-}: { 
-  templateBlob: ArrayBuffer, 
-  enrollment: Enrollment,
-  course: Course,
-  settings: OrganizationSettings | null | undefined,
-  representative: Representative | null | undefined,
-  backgroundStyle: any
+  backgroundStyle,
+}: {
+  templateBlob: ArrayBuffer;
+  enrollment: Enrollment;
+  course: Course;
+  settings: OrganizationSettings | null | undefined;
+  representative: Representative | null | undefined;
+  backgroundStyle: any;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = React.useState(false);
@@ -440,23 +564,18 @@ function CustomDocxTemplate({
   React.useEffect(() => {
     const renderFilledTemplate = async () => {
       if (!templateBlob || !containerRef.current) return;
-      
+
       try {
         setRendered(false);
         setError(null);
 
-        // Helper to convert ArrayBuffer to Base64
         const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
           let binary = '';
           const bytes = new Uint8Array(buffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
+          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
           return window.btoa(binary);
         };
 
-        // Helper for URL to Base64
         const urlToBase64 = async (url: string): Promise<string> => {
           if (!url) return '';
           try {
@@ -470,61 +589,37 @@ function CustomDocxTemplate({
           } catch { return ''; }
         };
 
-        // Composite Stamp Logic (Client Side)
         const compositeSignatureWithStamp = async (
           signatureBase64: string,
-          cfg: { useCustomStamp: boolean, customStampName: string, lema: string, orgName: string, orgRut: string, stampStyle?: string }
+          cfg: { useCustomStamp: boolean; customStampName: string; lema: string; orgName: string; orgRut: string; stampStyle?: string }
         ): Promise<string> => {
-          const W = 400;
-          const H = 400;
+          const W = 400, H = 400;
           const canvas = document.createElement('canvas');
-          canvas.width = W;
-          canvas.height = H;
+          canvas.width = W; canvas.height = H;
           const ctx = canvas.getContext('2d');
           if (!ctx) return signatureBase64;
           ctx.clearRect(0, 0, W, H);
-
-          const cx = W / 2;
-          const cy = H / 2;
+          const cx = W / 2, cy = H / 2;
           const stampColor = '#4338ca';
           const style = cfg.stampStyle || 'circular_double';
 
-          // --- STAMP DRAWING ---
           ctx.save();
           ctx.globalAlpha = 0.25;
           ctx.strokeStyle = stampColor;
           ctx.lineWidth = 2.5;
 
           if (style === 'square') {
-            const size = 340;
-            const radius = 20;
-            ctx.beginPath();
-            ctx.roundRect(cx - size / 2, cy - size / 2, size, size, radius);
-            ctx.stroke();
+            ctx.beginPath(); ctx.roundRect(cx - 170, cy - 170, 340, 340, 20); ctx.stroke();
           } else if (style === 'oval') {
-            ctx.beginPath();
-            ctx.ellipse(cx, cy, 180, 130, 0, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.beginPath(); ctx.ellipse(cx, cy, 180, 130, 0, 0, Math.PI * 2); ctx.stroke();
           } else {
             if (style === 'circular_dots') ctx.setLineDash([5, 10]);
-            ctx.beginPath();
-            ctx.arc(cx, cy, 160, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.beginPath(); ctx.arc(cx, cy, 160, 0, Math.PI * 2); ctx.stroke();
             ctx.setLineDash([]);
-            if (style === 'circular_double') {
-              ctx.beginPath();
-              ctx.arc(cx, cy, 145, 0, Math.PI * 2);
-              ctx.stroke();
-            }
-            if (style === 'circular_horizontal') {
-              ctx.beginPath();
-              ctx.moveTo(cx - 150, cy);
-              ctx.lineTo(cx + 150, cy);
-              ctx.stroke();
-            }
+            if (style === 'circular_double') { ctx.beginPath(); ctx.arc(cx, cy, 145, 0, Math.PI * 2); ctx.stroke(); }
+            if (style === 'circular_horizontal') { ctx.beginPath(); ctx.moveTo(cx - 150, cy); ctx.lineTo(cx + 150, cy); ctx.stroke(); }
           }
 
-          // Top Curved Text
           ctx.globalAlpha = 0.5;
           ctx.fillStyle = stampColor;
           ctx.font = 'bold 24px Arial, sans-serif';
@@ -532,73 +627,56 @@ function CustomDocxTemplate({
           ctx.textBaseline = 'middle';
 
           const title = (cfg.useCustomStamp ? cfg.customStampName : cfg.orgName).toUpperCase();
-          const subText = (cfg.lema || "CERTIFICACIÓN DIGITAL").toUpperCase();
-          
+          const subText = (cfg.lema || 'CERTIFICACIÓN DIGITAL').toUpperCase();
+
           if (style === 'oval' || style.startsWith('circular')) {
             const titleR = style === 'oval' ? 140 : 150;
             const arcLen = Math.PI * 0.8;
             const startAngle = -Math.PI / 2 - arcLen / 2;
-            
             for (let i = 0; i < title.length; i++) {
               const angle = startAngle + (i + 0.5) * (arcLen / title.length);
               ctx.save();
-              const xOffset = style === 'oval' ? titleR * 1.2 * Math.cos(angle) : titleR * Math.cos(angle);
-              const yOffset = style === 'oval' ? titleR * 0.9 * Math.sin(angle) : titleR * Math.sin(angle);
-              ctx.translate(cx + xOffset, cy + yOffset);
-              ctx.rotate(angle + Math.PI / 2);
-              ctx.fillText(title[i], 0, 0);
-              ctx.restore();
+              const xO = style === 'oval' ? titleR * 1.2 * Math.cos(angle) : titleR * Math.cos(angle);
+              const yO = style === 'oval' ? titleR * 0.9 * Math.sin(angle) : titleR * Math.sin(angle);
+              ctx.translate(cx + xO, cy + yO); ctx.rotate(angle + Math.PI / 2);
+              ctx.fillText(title[i], 0, 0); ctx.restore();
             }
-
-            const subStartAngle = Math.PI / 2 - arcLen / 2;
+            const subStart = Math.PI / 2 - arcLen / 2;
             ctx.font = '18px Arial, sans-serif';
             for (let i = 0; i < subText.length; i++) {
-                const angle = subStartAngle + (i + 0.5) * (arcLen / subText.length);
-                ctx.save();
-                const xOffset = style === 'oval' ? titleR * 1.2 * Math.cos(angle) : titleR * Math.cos(angle);
-                const yOffset = style === 'oval' ? titleR * 0.9 * Math.sin(angle) : titleR * Math.sin(angle);
-                ctx.translate(cx + xOffset, cy + yOffset);
-                ctx.rotate(angle - Math.PI / 2);
-                ctx.fillText(subText[i], 0, 0);
-                ctx.restore();
+              const angle = subStart + (i + 0.5) * (arcLen / subText.length);
+              ctx.save();
+              const xO = style === 'oval' ? titleR * 1.2 * Math.cos(angle) : titleR * Math.cos(angle);
+              const yO = style === 'oval' ? titleR * 0.9 * Math.sin(angle) : titleR * Math.sin(angle);
+              ctx.translate(cx + xO, cy + yO); ctx.rotate(angle - Math.PI / 2);
+              ctx.fillText(subText[i], 0, 0); ctx.restore();
             }
           } else {
-            ctx.font = 'bold 22px Arial, sans-serif';
-            ctx.fillText(title, cx, cy - 120);
-            ctx.font = '16px Arial, sans-serif';
-            ctx.fillText(subText, cx, cy + 120);
+            ctx.font = 'bold 22px Arial, sans-serif'; ctx.fillText(title, cx, cy - 120);
+            ctx.font = '16px Arial, sans-serif';      ctx.fillText(subText, cx, cy + 120);
           }
 
-          // Center Text
           ctx.globalAlpha = 0.6;
           if (style === 'circular_horizontal') {
-            ctx.font = 'bold 18px Arial, sans-serif';
-            ctx.fillText('FIRMA', cx, cy - 30);
-            ctx.font = '14px Arial, sans-serif';
-            ctx.fillText(cfg.orgRut, cx, cy + 30);
+            ctx.font = 'bold 18px Arial, sans-serif'; ctx.fillText('FIRMA', cx, cy - 30);
+            ctx.font = '14px Arial, sans-serif';      ctx.fillText(cfg.orgRut, cx, cy + 30);
           } else {
             ctx.font = 'bold 16px Arial, sans-serif';
             ctx.fillText(cfg.orgRut, cx, cy + (style === 'square' ? 30 : 0));
           }
           ctx.restore();
 
-          // --- SIGNATURE DRAWING ---
           if (signatureBase64 && signatureBase64.length > 10) {
             const sigImg = new Image();
             sigImg.src = signatureBase64;
-            await new Promise((resolve) => {
-              sigImg.onload = resolve;
-              sigImg.onerror = resolve;
-            });
+            await new Promise((resolve) => { sigImg.onload = resolve; sigImg.onerror = resolve; });
             const sigW = 320;
             const sigH = sigW / (sigImg.width / sigImg.height);
             ctx.drawImage(sigImg, cx - sigW / 2, cy - sigH / 2, sigW, sigH);
           }
-
           return canvas.toDataURL('image/png');
         };
 
-        // Prepare Images
         const rawSignatureBase64 = representative?.signatureUrl ? await urlToBase64(representative.signatureUrl) : '';
         const stampCfg = {
           useCustomStamp: settings?.useCustomStamp || false,
@@ -606,29 +684,25 @@ function CustomDocxTemplate({
           lema: settings?.lema || '',
           orgName: settings?.name || 'OTEC',
           orgRut: settings?.rut || '',
-          stampStyle: settings?.stampStyle || 'circular_double'
+          stampStyle: settings?.stampStyle || 'circular_double',
         };
         const signatureWithStampBase64 = await compositeSignatureWithStamp(rawSignatureBase64, stampCfg);
-
-        // QR Base64 (simple manual generation for preview if needed, or just placeholder)
-        // Here we'll just use a blank placeholder if needed, but in reality we'd use qrcode library
-        // actually we already have QRCodeSVG in the parent, but we need it as image for the server.
-        // For simplicity in preview, we might just skip the QR or send a static one.
-        // Let's at least try to get the QR from the hidden element if it exists.
-        const qrBase64 = ''; 
+        const qrBase64 = '';
 
         const markerData = {
-          EMPRESA_OTEC: settings?.name || 'Laboralcap E.I.R.L',
-          RUT_OTEC: settings?.rut || '76.058.374-K',
-          RUT_EMPRESA_OTEC: settings?.rut || '76.058.374-K',
+          EMPRESA_OTEC: settings?.name || '',
+          RUT_OTEC: settings?.rut || '',
+          RUT_EMPRESA_OTEC: settings?.rut || '',
           NOMBRE_CURSO: course.nameVisible || course.senceData?.nombreCurso || '',
           NOMBRE_ALUMNO: enrollment.studentName,
           RUT_ALUMNO: formatRut(enrollment.studentRut),
           HORAS: course.senceData?.horasActividad?.toString() || '0',
-          FECHA_EMISION: course.senceData?.fecEmision ? format(new Date(course.senceData.fecEmision), 'dd-MM-yyyy') : format(new Date(), 'dd-MM-yyyy'),
+          FECHA_EMISION: course.senceData?.fecEmision
+            ? format(new Date(course.senceData.fecEmision), 'dd-MM-yyyy')
+            : format(new Date(), 'dd-MM-yyyy'),
           ID_CERTIFICADO: enrollment.id,
-          REPRESENTANTE_NOMBRE: representative?.name || 'Alejandra Arce Núñez',
-          REPRESENTANTE_RUT: representative?.rut || '12.691.519-5'
+          REPRESENTANTE_NOMBRE: representative?.name || '',
+          REPRESENTANTE_RUT: representative?.rut || '',
         };
 
         const response = await fetch('/api/generate-certificate', {
@@ -637,13 +711,8 @@ function CustomDocxTemplate({
           body: JSON.stringify({
             templateBase64: arrayBufferToBase64(templateBlob),
             data: markerData,
-            images: {
-              FIRMA: signatureWithStampBase64,
-              FIRMA_OTEC: signatureWithStampBase64,
-              QR: qrBase64,
-              TIMBRE: ''
-            }
-          })
+            images: { FIRMA: signatureWithStampBase64, FIRMA_OTEC: signatureWithStampBase64, QR: qrBase64, TIMBRE: '' },
+          }),
         });
 
         if (!response.ok) throw new Error('Error al generar vista previa');
@@ -651,33 +720,18 @@ function CustomDocxTemplate({
         const filledBlob = await response.blob();
         const filledArrayBuffer = await filledBlob.arrayBuffer();
 
-        if (!containerRef.current) {
-          console.warn("Container ref is null, skipping preview render");
-          return;
-        }
-        
-        try {
-          if (containerRef.current) {
-            containerRef.current.innerHTML = '';
-          }
-          
-          if (typeof renderAsync === 'undefined') {
-             throw new Error("docx-preview library not loaded");
-          }
+        if (!containerRef.current) return;
 
-          await renderAsync(filledArrayBuffer, containerRef.current!, undefined, {
-            className: "docx-viewer",
-            inWrapper: false,
-            ignoreWidth: false,
-            ignoreHeight: false,
-          });
-          setRendered(true);
-        } catch (renderErr: any) {
-          console.error("Error during docx renderAsync:", renderErr);
-          throw new Error("Failed to render preview: " + renderErr.message);
-        }
+        containerRef.current.innerHTML = '';
+        await renderAsync(filledArrayBuffer, containerRef.current!, undefined, {
+          className: 'docx-viewer',
+          inWrapper: false,
+          ignoreWidth: false,
+          ignoreHeight: false,
+        });
+        setRendered(true);
       } catch (err: any) {
-        console.error("Preview error:", err);
+        console.error('Preview error:', err);
         setError(err.message);
       }
     };
@@ -686,15 +740,11 @@ function CustomDocxTemplate({
   }, [templateBlob, enrollment.id, course.id, settings, representative]);
 
   return (
-    <div 
-      id={`cert-${enrollment.id}`} 
+    <div
+      id={`cert-${enrollment.id}`}
       className="w-[794px] h-[1123px] bg-white relative overflow-hidden font-sans shadow-2xl mx-auto my-0 printable-area"
-      style={backgroundStyle}
     >
-      <div 
-        ref={containerRef}
-        className="w-full h-full"
-      />
+      <div ref={containerRef} className="w-full h-full" />
       {!rendered && !error && (
         <div className="absolute inset-0 flex items-center justify-center bg-white/80">
           <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Cargando Vista Previa...</p>
@@ -708,4 +758,3 @@ function CustomDocxTemplate({
     </div>
   );
 }
-

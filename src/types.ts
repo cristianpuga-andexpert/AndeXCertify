@@ -89,3 +89,12 @@ export interface CertificateTemplate {
   createdAt: string;
   createdBy: string;
 }
+
+export interface AppUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: 'admin' | 'user';
+  isActive: boolean;
+  createdAt: string;
+}

@@ -1,21 +1,40 @@
+import 'dotenv/config';
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import ImageModule from "docxtemplater-image-module-free";
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { exec, execSync } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import crypto from "crypto";
 import os from "os";
+import { uploadFromBase64, deleteFile, getSignedUrl } from './src/lib/storage';
+import { requireAuth, AuthRequest } from './src/lib/auth-middleware';
+import {
+  listCoursesByUser, getCourseById, createCourse, updateCourse, removeCourse,
+  listEnrollmentsByCourse, getEnrollmentById, createEnrollment, updateEnrollment, removeEnrollment,
+  getSettingsByUser, upsertSettings,
+  listRepresentativesByUser, createRepresentative, removeRepresentative,
+  listTemplatesByUser, getTemplateById, createTemplate, removeTemplate,
+} from './src/db/repositories';
 
 // Removed unused/deprecated PDF engines as requested by user (mammoth, pdfmake, html-to-pdfmake)
 
 const execAsync = promisify(exec);
-const __filename = fileURLToPath(import.meta.url);
+// Works in both ESM (tsx dev) and CJS (esbuild --format=cjs production build)
+// In CJS, import.meta.url is undefined; fall back to process.argv[1]
+const __filename = (() => {
+  try {
+    const u = (import.meta as { url?: string }).url;
+    return u ? fileURLToPath(u) : process.argv[1];
+  } catch {
+    return process.argv[1];
+  }
+})();
 const __dirname = path.dirname(__filename);
 
 function findLibreOfficeBinary(): string | null {
@@ -24,7 +43,10 @@ function findLibreOfficeBinary(): string | null {
     "libreoffice",
     "/usr/bin/soffice",
     "/usr/bin/libreoffice",
-    "/opt/libreoffice/program/soffice"
+    "/opt/libreoffice/program/soffice",
+    // Windows paths
+    "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+    "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
   ];
 
   console.log("[PDF Conversion] Ejecutando validación previa:");
@@ -410,9 +432,35 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
+  // DEV mode: serve locally stored files (replaces S3 for local development)
+  if (process.env.DEV_MODE === 'true') {
+    const devStoragePath = path.join(process.cwd(), 'dev-storage');
+    app.use('/dev-storage', express.static(devStoragePath));
+    console.log(`[DEV] Serving local storage from ${devStoragePath}`);
+  }
+
+  /**
+   * Resolves the template content as a base64 string.
+   * Accepts either a pre-encoded base64 string or an S3 key (fetched on-demand).
+   */
+  async function resolveTemplateBase64(
+    templateBase64: string | undefined,
+    templateS3Key: string | undefined
+  ): Promise<string> {
+    if (templateBase64) return templateBase64;
+    if (templateS3Key) {
+      const signedUrl = await getSignedUrl(templateS3Key);
+      const response = await fetch(signedUrl);
+      if (!response.ok) throw new Error(`Failed to fetch template from S3: ${response.statusText}`);
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer).toString('base64');
+    }
+    throw new Error('Either templateBase64 or templateS3Key must be provided');
+  }
+
   app.post("/api/generate-certificate-pdf", async (req, res) => {
     try {
-      const { templateBase64, data, images, stampConfig } = req.body;
+      const { templateBase64, templateS3Key, data, images, stampConfig } = req.body;
       const cfg: StampConfig = stampConfig || {
         useCustomStamp: false,
         customStampName: '',
@@ -421,7 +469,8 @@ async function startServer() {
         orgRut: (data as Record<string, string>).RUT_EMPRESA_OTEC || '',
       };
 
-      const docxBuf = await generateRenderedDocx(templateBase64, data, images, cfg);
+      const resolvedBase64 = await resolveTemplateBase64(templateBase64, templateS3Key);
+      const docxBuf = await generateRenderedDocx(resolvedBase64, data, images, cfg);
       const pdfBuf = await convertDocxToPdf(docxBuf);
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -436,7 +485,7 @@ async function startServer() {
 
   app.post("/api/generate-certificate", async (req, res) => {
     try {
-      const { templateBase64, data, images, stampConfig } = req.body;
+      const { templateBase64, templateS3Key, data, images, stampConfig } = req.body;
       const cfg: StampConfig = stampConfig || {
         useCustomStamp: false,
         customStampName: '',
@@ -445,7 +494,8 @@ async function startServer() {
         orgRut: (data as Record<string, string>).RUT_EMPRESA_OTEC || '',
       };
 
-      const out = await generateRenderedDocx(templateBase64, data, images, cfg);
+      const resolvedBase64 = await resolveTemplateBase64(templateBase64, templateS3Key);
+      const out = await generateRenderedDocx(resolvedBase64, data, images, cfg);
 
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', 'attachment; filename=certificate.docx');
@@ -459,6 +509,251 @@ async function startServer() {
       res.status(500).json({ error: message, details: err.message });
     }
   });
+
+  // ─── Template S3 endpoints ────────────────────────────────────────────────
+
+  /**
+   * POST /api/templates/upload
+   * Uploads a DOCX template to S3 and returns the S3 key.
+   * Body: { fileData: string (base64, with or without data-URI prefix),
+   *         fileName: string, userId: string }
+   * Response: { s3Key: string, publicUrl: string }
+   */
+  app.post("/api/templates/upload", async (req, res) => {
+    try {
+      const { fileData, fileName, userId } = req.body as {
+        fileData: string;
+        fileName: string;
+        userId: string;
+      };
+      if (!fileData || !fileName || !userId) {
+        res.status(400).json({ error: "fileData, fileName and userId are required" });
+        return;
+      }
+      const ext = path.extname(fileName) || '.docx';
+      const s3Key = `templates/${userId}/${crypto.randomUUID()}${ext}`;
+      const publicUrl = await uploadFromBase64(
+        fileData,
+        s3Key,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      res.json({ s3Key, publicUrl });
+    } catch (err: any) {
+      console.error("[S3 Upload] Error:", err);
+      res.status(500).json({ error: "Upload failed", details: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/templates/s3
+   * Deletes a template file from S3.
+   * Body: { s3Key: string }
+   */
+  app.delete("/api/templates/s3", async (req, res) => {
+    try {
+      const { s3Key } = req.body as { s3Key: string };
+      if (!s3Key) {
+        res.status(400).json({ error: "s3Key is required" });
+        return;
+      }
+      await deleteFile(s3Key);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[S3 Delete] Error:", err);
+      res.status(500).json({ error: "Delete failed", details: err.message });
+    }
+  });
+
+  /**
+   * GET /api/templates/signed-url?key=templates/...
+   * Returns a pre-signed URL for temporary access to a private S3 object.
+   */
+  app.get("/api/templates/signed-url", async (req, res) => {
+    try {
+      const key = req.query.key as string;
+      if (!key) {
+        res.status(400).json({ error: "key query parameter is required" });
+        return;
+      }
+      const url = await getSignedUrl(key);
+      res.json({ url });
+    } catch (err: any) {
+      console.error("[S3 Signed URL] Error:", err);
+      res.status(500).json({ error: "Could not generate signed URL", details: err.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ─── COURSES ─────────────────────────────────────────────────────────────
+  app.get('/api/courses', requireAuth, async (req, res) => {
+    try {
+      const list = await listCoursesByUser((req as AuthRequest).userId);
+      res.json(list);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/courses', requireAuth, async (req, res) => {
+    try {
+      const course = await createCourse((req as AuthRequest).userId, req.body);
+      res.status(201).json(course);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get('/api/courses/:id', requireAuth, async (req, res) => {
+    try {
+      const course = await getCourseById(req.params.id);
+      if (!course || course.createdBy !== (req as AuthRequest).userId) {
+        res.status(404).json({ error: 'Curso no encontrado' }); return;
+      }
+      res.json(course);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.put('/api/courses/:id', requireAuth, async (req, res) => {
+    try {
+      const course = await updateCourse(req.params.id, (req as AuthRequest).userId, req.body);
+      if (!course) { res.status(404).json({ error: 'Curso no encontrado' }); return; }
+      res.json(course);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete('/api/courses/:id', requireAuth, async (req, res) => {
+    try {
+      await removeCourse(req.params.id, (req as AuthRequest).userId);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ─── ENROLLMENTS ─────────────────────────────────────────────────────────
+  app.get('/api/courses/:courseId/enrollments', requireAuth, async (req, res) => {
+    try {
+      const list = await listEnrollmentsByCourse(req.params.courseId, (req as AuthRequest).userId);
+      res.json(list);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/enrollments', requireAuth, async (req, res) => {
+    try {
+      const enrollment = await createEnrollment((req as AuthRequest).userId, req.body);
+      res.status(201).json(enrollment);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.put('/api/enrollments/:id', requireAuth, async (req, res) => {
+    try {
+      const enrollment = await updateEnrollment(req.params.id, (req as AuthRequest).userId, req.body);
+      if (!enrollment) { res.status(404).json({ error: 'Inscripción no encontrada' }); return; }
+      res.json(enrollment);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete('/api/enrollments/:id', requireAuth, async (req, res) => {
+    try {
+      await removeEnrollment(req.params.id, (req as AuthRequest).userId);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ─── SETTINGS ────────────────────────────────────────────────────────────
+  app.get('/api/settings', requireAuth, async (req, res) => {
+    try {
+      const settings = await getSettingsByUser((req as AuthRequest).userId);
+      res.json(settings || {});
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.put('/api/settings', requireAuth, async (req, res) => {
+    try {
+      const settings = await upsertSettings((req as AuthRequest).userId, req.body);
+      res.json(settings);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ─── REPRESENTATIVES ─────────────────────────────────────────────────────
+  app.get('/api/representatives', requireAuth, async (req, res) => {
+    try {
+      const list = await listRepresentativesByUser((req as AuthRequest).userId);
+      res.json(list);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/representatives', requireAuth, async (req, res) => {
+    try {
+      const rep = await createRepresentative((req as AuthRequest).userId, req.body);
+      res.status(201).json(rep);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete('/api/representatives/:id', requireAuth, async (req, res) => {
+    try {
+      await removeRepresentative(req.params.id, (req as AuthRequest).userId);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ─── TEMPLATES (DB records) ──────────────────────────────────────────────
+  app.get('/api/templates', requireAuth, async (req, res) => {
+    try {
+      const list = await listTemplatesByUser((req as AuthRequest).userId);
+      res.json(list);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get('/api/templates/:id', requireAuth, async (req, res) => {
+    try {
+      const tpl = await getTemplateById(req.params.id);
+      if (!tpl || tpl.createdBy !== (req as AuthRequest).userId) {
+        res.status(404).json({ error: 'Plantilla no encontrada' }); return;
+      }
+      res.json(tpl);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/templates', requireAuth, async (req, res) => {
+    try {
+      const { name, type, s3Key, fileName } = req.body;
+      const tpl = await createTemplate((req as AuthRequest).userId, { name, type, s3Key, fileName });
+      res.status(201).json(tpl);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete('/api/templates/:id', requireAuth, async (req, res) => {
+    try {
+      await removeTemplate(req.params.id, (req as AuthRequest).userId);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ─── PUBLIC: certificate validation (no auth) ────────────────────────────
+  app.get('/api/public/validate/:enrollmentId', async (req, res) => {
+    try {
+      const enrollment = await getEnrollmentById(req.params.enrollmentId);
+      if (!enrollment) { res.status(404).json({ error: 'Certificado no encontrado' }); return; }
+
+      const course = await getCourseById(enrollment.courseId);
+      if (!course) { res.status(404).json({ error: 'Curso no encontrado' }); return; }
+
+      const [settings, representatives] = await Promise.all([
+        getSettingsByUser(course.createdBy),
+        listRepresentativesByUser(course.createdBy),
+      ]);
+
+      let templateS3Key: string | null = null;
+      const builtIn = ['modern', 'diploma', 'classic', 'tech', 'minimal'];
+      if (course.templateId && !builtIn.includes(course.templateId)) {
+        const tpl = await getTemplateById(course.templateId);
+        templateS3Key = tpl?.fileData ?? null;
+      }
+
+      res.json({ enrollment, course, settings: settings || {}, representatives, templateS3Key });
+    } catch (err: any) {
+      console.error('[validate]', err);
+      res.status(500).json({ error: 'No fue posible verificar el certificado. Intente nuevamente.' });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
