@@ -22,32 +22,216 @@ const formatDateES = (dateStr?: string): string => {
   return `${d.getDate()} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`;
 };
 
+// ── Shared utilities ──────────────────────────────────────────────────────────
+
+async function urlToBase64(url: string): Promise<string> {
+  if (!url) return '';
+  if (url.startsWith('data:')) return url;
+  try {
+    const resp = await fetch(url, { mode: 'cors' });
+    const blob = await resp.blob();
+    return new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch { return ''; }
+}
+
+/**
+ * Composites the representative signature image on top of the organisation
+ * stamp watermark.  Returns a PNG data-URL.
+ */
+async function buildSignatureWithStamp(
+  signatureUrl: string | undefined,
+  settings: OrganizationSettings | null | undefined,
+  darkBg = false
+): Promise<string> {
+  const W = 440, H = 200;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H / 2;
+  const stampColor = darkBg ? '#ffffff' : '#1B2F5B';
+  const style = settings?.stampStyle || 'circular_double';
+  const displayName = ((settings?.useCustomStamp ? settings?.customStampName : settings?.name) || settings?.name || '').toUpperCase();
+  const lema = (settings?.lema || 'CERTIFICACIÓN DIGITAL').toUpperCase();
+  const orgRut = settings?.rut || '';
+  const R = 88;
+
+  // ── Stamp watermark ────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.strokeStyle = stampColor;
+  ctx.fillStyle   = stampColor;
+  ctx.lineWidth   = 2.5;
+  ctx.globalAlpha = 0.14;
+
+  if (style === 'square') {
+    ctx.beginPath(); ctx.roundRect(cx - R, cy - R, R * 2, R * 2, 12); ctx.stroke();
+  } else if (style === 'oval') {
+    ctx.beginPath(); ctx.ellipse(cx, cy, R * 1.35, R * 0.82, 0, 0, Math.PI * 2); ctx.stroke();
+  } else {
+    if (style === 'circular_dots') ctx.setLineDash([5, 10]);
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    if (style === 'circular_double') {
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, cy, R - 11, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (style === 'circular_horizontal') {
+      ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
+    }
+  }
+
+  // Curved text on stamp
+  ctx.globalAlpha = 0.28;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  if (style === 'oval' || style.startsWith('circular')) {
+    const textR  = style === 'oval' ? R * 1.28 : R;
+    const textRy = style === 'oval' ? R * 0.80 : R;
+    const arcLen = Math.PI * 0.70;
+
+    ctx.font = 'bold 13px Arial, sans-serif';
+    const title = displayName.slice(0, 26);
+    const startTop = -Math.PI / 2 - arcLen / 2;
+    for (let i = 0; i < title.length; i++) {
+      const a = startTop + (i + 0.5) * (arcLen / title.length);
+      ctx.save();
+      ctx.translate(cx + textR * Math.cos(a), cy + textRy * Math.sin(a));
+      ctx.rotate(a + Math.PI / 2);
+      ctx.fillText(title[i], 0, 0);
+      ctx.restore();
+    }
+
+    ctx.font = '10px Arial, sans-serif';
+    const sub = lema.slice(0, 30);
+    const startBottom = Math.PI / 2 - arcLen / 2;
+    for (let i = 0; i < sub.length; i++) {
+      const a = startBottom + (i + 0.5) * (arcLen / sub.length);
+      ctx.save();
+      ctx.translate(cx + textR * Math.cos(a), cy + textRy * Math.sin(a));
+      ctx.rotate(a - Math.PI / 2);
+      ctx.fillText(sub[i], 0, 0);
+      ctx.restore();
+    }
+
+    if (orgRut && style !== 'circular_horizontal') {
+      ctx.globalAlpha = 0.32;
+      ctx.font = 'bold 11px Arial, sans-serif';
+      ctx.fillText(orgRut, cx, cy + 4);
+    }
+  } else {
+    ctx.font = 'bold 14px Arial, sans-serif';
+    ctx.fillText(displayName, cx, cy - R + 22);
+    ctx.font = '11px Arial, sans-serif';
+    ctx.fillText(lema, cx, cy + R - 22);
+    if (orgRut) { ctx.globalAlpha = 0.32; ctx.fillText(orgRut, cx, cy); }
+  }
+  ctx.restore();
+
+  // ── Signature image on top ─────────────────────────────────────────────────
+  if (signatureUrl) {
+    const sigSrc = await urlToBase64(signatureUrl);
+    if (sigSrc) {
+      const sigImg = new Image();
+      sigImg.src = sigSrc;
+      await new Promise<void>((res) => { sigImg.onload = () => res(); sigImg.onerror = () => res(); });
+      if (sigImg.width > 0) {
+        const maxW = W * 0.72;
+        const maxH = H * 0.60;
+        let sw = sigImg.width, sh = sigImg.height;
+        if (sw > maxW) { sh = sh * maxW / sw; sw = maxW; }
+        if (sh > maxH) { sw = sw * maxH / sh; sh = maxH; }
+
+        if (darkBg) {
+          // Draw onto offscreen canvas and invert so it appears white on dark bg
+          const off = document.createElement('canvas');
+          off.width = sigImg.width; off.height = sigImg.height;
+          const offCtx = off.getContext('2d')!;
+          offCtx.drawImage(sigImg, 0, 0);
+          offCtx.globalCompositeOperation = 'difference';
+          offCtx.fillStyle = 'white';
+          offCtx.fillRect(0, 0, off.width, off.height);
+          ctx.drawImage(off, cx - sw / 2, cy - sh / 2, sw, sh);
+        } else {
+          ctx.drawImage(sigImg, cx - sw / 2, cy - sh / 2, sw, sh);
+        }
+      }
+    }
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+// ── StampedSignature component ────────────────────────────────────────────────
+/** Renders the signature image composited over the organisation stamp watermark. */
+function StampedSignature({
+  signatureUrl,
+  settings,
+  darkBg = false,
+  imgClass = 'h-16 object-contain mb-1',
+}: {
+  signatureUrl?: string;
+  settings?: OrganizationSettings | null;
+  darkBg?: boolean;
+  imgClass?: string;
+}) {
+  const [compositeSrc, setCompositeSrc] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    buildSignatureWithStamp(signatureUrl, settings, darkBg).then((result) => {
+      if (!cancelled) setCompositeSrc(result);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signatureUrl, settings?.stampStyle, settings?.useCustomStamp,
+      settings?.customStampName, settings?.lema, settings?.name,
+      settings?.rut, darkBg]);
+
+  if (!compositeSrc) {
+    if (!signatureUrl) return null;
+    return (
+      <img
+        src={signatureUrl}
+        className={imgClass}
+        alt="Firma"
+        style={darkBg ? { filter: 'brightness(200) invert(1)' } : undefined}
+      />
+    );
+  }
+  return <img src={compositeSrc} className={imgClass} alt="Firma" />;
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export function CertificateTemplate({ course, enrollment, settings, representative, templateId, templateBlob }: Props) {
   if (!enrollment || !course) return null;
 
   const verificationUrl = `${window.location.origin}/verify/${enrollment.id}`;
-  const orgName   = settings?.name || 'Organización';
-  const orgRut    = settings?.rut  || '';
-  const repName   = representative?.name || '';
+  const orgName      = settings?.name || 'Organización';
+  const orgRut       = settings?.rut  || '';
+  const repName      = representative?.name || '';
   const signatureUrl = representative?.signatureUrl;
   const courseName   = course.nameVisible || course.senceData?.nombreCurso || '';
   const hours        = course.senceData?.horasActividad;
   const emisionDate  = formatDateES(course.senceData?.fecEmision);
   const initials     = orgName.slice(0, 2).toUpperCase();
 
-  // Navy / green / orange — palette from client designs
+  // Palette from client designs
   const NAVY   = '#1B2F5B';
   const GREEN  = '#7DC240';
   const ORANGE = '#F5A623';
 
   const backgroundStyle = course.customAssetUrl ? {
     backgroundImage: `url(${course.customAssetUrl})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
+    backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
   } : {};
 
-  // ── Custom Word template ──────────────────────────────────────────────────────
+  // ── Custom Word template ────────────────────────────────────────────────────
   if (templateId === 'custom' && templateBlob) {
     return (
       <CustomDocxTemplate
@@ -61,7 +245,7 @@ export function CertificateTemplate({ course, enrollment, settings, representati
     );
   }
 
-  // ── TEMPLATE "diploma" — Foto 2: Elegante Oscuro ─────────────────────────────
+  // ── TEMPLATE "diploma" — Elegante Oscuro ────────────────────────────────────
   if (templateId === 'diploma') {
     return (
       <div
@@ -77,19 +261,16 @@ export function CertificateTemplate({ course, enrollment, settings, representati
 
           {/* ─ TOP ─ */}
           <div className="flex flex-col items-center w-full">
-            {/* Logo circle */}
-            <div className="h-24 w-24 rounded-full flex flex-col items-center justify-center mb-4"
-                 style={{ border: `2px solid ${ORANGE}` }}>
-              {settings?.logoUrl ? (
-                <img src={settings.logoUrl} className="h-16 w-16 object-contain rounded-full" alt="Logo" />
-              ) : (
-                <>
-                  <span className="text-2xl font-black text-white leading-none">{initials}</span>
-                  <span className="text-[6px] font-black uppercase tracking-widest mt-0.5"
-                        style={{ color: ORANGE }}>OTEC · SENCE</span>
-                </>
-              )}
-            </div>
+
+            {/* Logo — sin círculo */}
+            {settings?.logoUrl ? (
+              <img src={settings.logoUrl} className="h-16 object-contain mb-3" alt="Logo" />
+            ) : (
+              <div className="flex flex-col items-center mb-3">
+                <span className="text-2xl font-black text-white leading-none">{initials}</span>
+                <span className="text-[7px] font-black uppercase tracking-widest mt-0.5" style={{ color: ORANGE }}>OTEC · SENCE</span>
+              </div>
+            )}
 
             <div className="text-[10px] font-black text-white uppercase tracking-[0.25em]">{orgName}</div>
             {orgRut && (
@@ -103,9 +284,10 @@ export function CertificateTemplate({ course, enrollment, settings, representati
               <div className="h-px w-20" style={{ backgroundColor: ORANGE }} />
             </div>
 
-            {/* Title */}
-            <div className="text-[78px] font-black text-white leading-none tracking-tight">CERTIFI</div>
-            <div className="text-[78px] font-black leading-none tracking-tight" style={{ color: GREEN }}>CADO</div>
+            {/* Title — single line */}
+            <div className="font-black leading-none tracking-tight text-center" style={{ fontSize: '68px' }}>
+              <span style={{ color: '#ffffff' }}>CERTIFI</span><span style={{ color: GREEN }}>CADO</span>
+            </div>
             <div className="text-[10px] font-bold tracking-[0.5em] mt-2"
                  style={{ color: 'rgba(255,255,255,0.45)' }}>DE APROBACIÓN</div>
 
@@ -138,7 +320,7 @@ export function CertificateTemplate({ course, enrollment, settings, representati
             {/* Info cards */}
             <div className="grid grid-cols-3 gap-3 w-full">
               <div className="rounded-xl p-4 text-center" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
-                <div className="text-3xl font-black leading-none mb-0.5" style={{ color: GREEN }}>
+                <div className="text-3xl font-black leading-none mb-1.5" style={{ color: GREEN }}>
                   {hours ?? '—'}
                 </div>
                 <div className="text-[7px] font-black uppercase tracking-widest text-white">HORAS LECTIVAS</div>
@@ -164,34 +346,12 @@ export function CertificateTemplate({ course, enrollment, settings, representati
 
           {/* ─ BOTTOM ─ */}
           <div className="w-full mt-4">
-            {/* Stamp */}
-            <div className="flex justify-center mb-4">
-              <div className="h-14 w-14 rounded-full flex items-center justify-center"
-                   style={{ border: `2px dashed rgba(125,194,64,0.35)` }}>
-                {settings?.logoUrl ? (
-                  <img src={settings.logoUrl} className="h-9 w-9 object-contain rounded-full" alt="" />
-                ) : (
-                  <span className="text-[7px] font-black uppercase text-center leading-tight px-1"
-                        style={{ color: 'rgba(255,255,255,0.35)' }}>{initials}</span>
-                )}
-              </div>
-            </div>
 
-            {/* Signature lines */}
+            {/* Signature with stamp watermark */}
             <div className="flex justify-around">
               <div className="flex flex-col items-center">
-                {signatureUrl && (
-                  <img src={signatureUrl} className="h-10 object-contain mb-1 brightness-200 invert" alt="Firma" />
-                )}
-                <div className="h-px w-32 mb-1" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} />
-                <div className="text-[7px] uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.35)' }}>
-                  DIRECTOR ACADÉMICO
-                </div>
-                <div className="text-[9px] font-black text-white">{repName}</div>
-              </div>
-              <div className="flex flex-col items-center">
-                <div className="h-10 mb-1" />
-                <div className="h-px w-32 mb-1" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} />
+                <StampedSignature signatureUrl={signatureUrl} settings={settings} darkBg imgClass="h-16 object-contain mb-1" />
+                <div className="h-px w-36 mb-1" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} />
                 <div className="text-[7px] uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.35)' }}>
                   REPRESENTANTE LEGAL
                 </div>
@@ -211,7 +371,7 @@ export function CertificateTemplate({ course, enrollment, settings, representati
     );
   }
 
-  // ── TEMPLATE "classic" — Foto 3: Franja Superior ─────────────────────────────
+  // ── TEMPLATE "classic" — Franja Superior ───────────────────────────────────
   if (templateId === 'classic') {
     return (
       <div
@@ -236,22 +396,19 @@ export function CertificateTemplate({ course, enrollment, settings, representati
             </span>
           </div>
 
-          {/* Main title */}
-          <div className="text-[84px] font-black text-white leading-none tracking-tight pb-1">CERTIFI</div>
-          <div className="text-[84px] font-black leading-none tracking-tight" style={{ color: GREEN }}>CADO</div>
+          {/* Main title — single line */}
+          <div className="font-black leading-none tracking-tight text-center" style={{ fontSize: '72px' }}>
+            <span style={{ color: '#ffffff' }}>CERTIFI</span><span style={{ color: GREEN }}>CADO</span>
+          </div>
           <div className="text-[10px] font-bold tracking-[0.5em] mt-2"
                style={{ color: 'rgba(255,255,255,0.4)' }}>DE APROBACIÓN</div>
 
           {/* Green diagonal stripe */}
           <div className="absolute bottom-0 left-0 right-0 overflow-hidden" style={{ height: '44px' }}>
             <div style={{
-              width: '110%',
-              height: '36px',
-              backgroundColor: GREEN,
-              transform: 'skewY(-1.8deg)',
-              transformOrigin: 'left',
-              marginTop: '16px',
-              marginLeft: '-5%',
+              width: '110%', height: '36px', backgroundColor: GREEN,
+              transform: 'skewY(-1.8deg)', transformOrigin: 'left',
+              marginTop: '16px', marginLeft: '-5%',
             }} />
           </div>
         </div>
@@ -261,22 +418,18 @@ export function CertificateTemplate({ course, enrollment, settings, representati
 
           {/* Participant block */}
           <div className="border-l-4 pl-5 mb-7" style={{ borderColor: GREEN }}>
-            <div className="text-[8px] font-black uppercase tracking-widest mb-1"
-                 style={{ color: '#94a3b8' }}>PARTICIPANTE</div>
+            <div className="text-[8px] font-black uppercase tracking-widest mb-1" style={{ color: '#94a3b8' }}>PARTICIPANTE</div>
             <div className="text-[29px] font-black leading-tight" style={{ color: NAVY }}>
               {enrollment.studentName}
             </div>
-            <div className="text-[8px] font-black uppercase tracking-widest mt-2 mb-1"
-                 style={{ color: '#94a3b8' }}>PROGRAMA FORMATIVO</div>
-            <div className="text-base font-black leading-snug" style={{ color: GREEN }}>
-              {courseName}
-            </div>
+            <div className="text-[8px] font-black uppercase tracking-widest mt-2 mb-1" style={{ color: '#94a3b8' }}>PROGRAMA FORMATIVO</div>
+            <div className="text-base font-black leading-snug" style={{ color: GREEN }}>{courseName}</div>
           </div>
 
           {/* Info cards */}
           <div className="grid grid-cols-3 gap-4 mb-7">
             <div className="rounded-xl p-4 text-center" style={{ backgroundColor: NAVY }}>
-              <div className="text-[30px] font-black leading-none mb-0.5" style={{ color: GREEN }}>
+              <div className="text-[30px] font-black leading-none mb-1.5" style={{ color: GREEN }}>
                 {hours ?? '—'}
               </div>
               <div className="text-[7px] font-black uppercase tracking-widest text-white">HORAS LECTIVAS</div>
@@ -297,46 +450,19 @@ export function CertificateTemplate({ course, enrollment, settings, representati
           </div>
 
           {/* Description */}
-          <p className="text-[11px] italic text-center leading-relaxed mb-6 max-w-lg mx-auto"
-             style={{ color: '#94a3b8' }}>
+          <p className="text-[11px] italic text-center leading-relaxed mb-6 max-w-lg mx-auto" style={{ color: '#94a3b8' }}>
             {course.description ||
              'El presente certificado acredita la aprobación del programa formativo en reconocimiento al esfuerzo y dedicación demostrados.'}
           </p>
 
           <div className="flex-1" />
 
-          {/* Signatures */}
-          <div className="flex items-end justify-between mb-5">
-            <div className="flex flex-col items-start">
-              {signatureUrl && (
-                <img src={signatureUrl} className="h-10 object-contain mb-1" alt="Firma" />
-              )}
-              <div className="h-px w-36 mb-1" style={{ backgroundColor: '#e2e8f0' }} />
-              <div className="text-[7px] uppercase tracking-widest" style={{ color: '#94a3b8' }}>
-                DIRECTOR ACADÉMICO
-              </div>
-              <div className="text-[9px] font-black" style={{ color: NAVY }}>{repName}</div>
-            </div>
-
-            {/* Stamp */}
+          {/* Signatures — sin círculo punteado */}
+          <div className="flex items-end justify-around mb-5">
             <div className="flex flex-col items-center">
-              <div className="h-16 w-16 rounded-full flex items-center justify-center"
-                   style={{ border: '2px dashed rgba(27,47,91,0.2)' }}>
-                {settings?.logoUrl ? (
-                  <img src={settings.logoUrl} className="h-10 w-10 object-contain rounded-full" alt="" />
-                ) : (
-                  <span className="text-[7px] font-black uppercase text-center leading-tight"
-                        style={{ color: 'rgba(27,47,91,0.3)' }}>{initials}</span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-col items-end">
-              <div className="h-10 mb-1" />
+              <StampedSignature signatureUrl={signatureUrl} settings={settings} imgClass="h-16 object-contain mb-1" />
               <div className="h-px w-36 mb-1" style={{ backgroundColor: '#e2e8f0' }} />
-              <div className="text-[7px] uppercase tracking-widest" style={{ color: '#94a3b8' }}>
-                REPRESENTANTE LEGAL
-              </div>
+              <div className="text-[7px] uppercase tracking-widest" style={{ color: '#94a3b8' }}>REPRESENTANTE LEGAL</div>
               <div className="text-[9px] font-black" style={{ color: NAVY }}>{repName}</div>
             </div>
           </div>
@@ -352,7 +478,7 @@ export function CertificateTemplate({ course, enrollment, settings, representati
     );
   }
 
-  // ── DEFAULT "modern" — Foto 1: Panel Lateral ─────────────────────────────────
+  // ── DEFAULT "modern" — Panel Lateral ───────────────────────────────────────
   return (
     <div
       id={`cert-${enrollment.id}`}
@@ -362,20 +488,16 @@ export function CertificateTemplate({ course, enrollment, settings, representati
       <div className="shrink-0 flex flex-col py-9 px-6 overflow-hidden"
            style={{ width: '220px', backgroundColor: NAVY }}>
 
-        {/* Logo circle */}
-        <div className="flex justify-center mb-5">
-          <div className="h-[72px] w-[72px] rounded-full flex flex-col items-center justify-center"
-               style={{ border: `2px solid ${GREEN}` }}>
-            {settings?.logoUrl ? (
-              <img src={settings.logoUrl} className="h-12 w-12 object-contain rounded-full" alt="Logo" />
-            ) : (
-              <>
-                <span className="text-2xl font-black text-white leading-none">{initials}</span>
-                <span className="text-[6px] font-black uppercase tracking-widest mt-0.5"
-                      style={{ color: GREEN }}>OTEC SENCE</span>
-              </>
-            )}
-          </div>
+        {/* Logo — sin círculo, tamaño propio */}
+        <div className="flex justify-center mb-4">
+          {settings?.logoUrl ? (
+            <img src={settings.logoUrl} className="max-h-20 max-w-full object-contain" alt="Logo" />
+          ) : (
+            <div className="flex flex-col items-center">
+              <span className="text-2xl font-black text-white leading-none">{initials}</span>
+              <span className="text-[6px] font-black uppercase tracking-widest mt-0.5" style={{ color: GREEN }}>OTEC SENCE</span>
+            </div>
+          )}
         </div>
 
         {/* Org name */}
@@ -392,9 +514,10 @@ export function CertificateTemplate({ course, enrollment, settings, representati
         <div className="space-y-4 flex-1">
           {hours && (
             <div className="text-center">
-              <div className="text-[7px] font-bold uppercase tracking-widest mb-0.5"
+              <div className="text-[7px] font-bold uppercase tracking-widest mb-1"
                    style={{ color: 'rgba(255,255,255,0.4)' }}>DURACIÓN</div>
-              <div className="text-[38px] font-black leading-none" style={{ color: GREEN }}>{hours}</div>
+              {/* Número centrado con espacio explícito respecto a HORAS */}
+              <div className="text-[38px] font-black leading-none mb-1.5" style={{ color: GREEN }}>{hours}</div>
               <div className="text-[7px] uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.45)' }}>HORAS</div>
             </div>
           )}
@@ -449,10 +572,11 @@ export function CertificateTemplate({ course, enrollment, settings, representati
           CERTIFICADO DE APROBACIÓN
         </div>
 
-        {/* Main title */}
+        {/* Main title — single line, color bipartido */}
         <div className="mb-5">
-          <div className="font-black leading-none tracking-tight" style={{ fontSize: '68px', color: NAVY }}>CERTIFI</div>
-          <div className="font-black leading-none tracking-tight" style={{ fontSize: '68px', color: GREEN }}>CADO</div>
+          <div className="font-black leading-none tracking-tight whitespace-nowrap" style={{ fontSize: '56px' }}>
+            <span style={{ color: NAVY }}>CERTIFI</span><span style={{ color: GREEN }}>CADO</span>
+          </div>
           <div className="flex space-x-1 mt-3">
             <div className="h-1 w-16 rounded-full" style={{ backgroundColor: GREEN }} />
             <div className="h-1 w-6 rounded-full"  style={{ backgroundColor: ORANGE }} />
@@ -499,31 +623,13 @@ export function CertificateTemplate({ course, enrollment, settings, representati
 
         <div className="flex-1" />
 
-        {/* Footer */}
+        {/* Footer — sin círculo punteado, con sello en firma */}
         <div className="border-t pt-5" style={{ borderColor: '#f1f5f9' }}>
-          <div className="flex items-end justify-between mb-4">
-
-            {/* Stamp */}
+          <div className="flex items-end justify-center mb-4">
             <div className="flex flex-col items-center">
-              <div className="h-14 w-14 rounded-full flex items-center justify-center"
-                   style={{ border: '2px dashed rgba(27,47,91,0.2)' }}>
-                {settings?.logoUrl ? (
-                  <img src={settings.logoUrl} className="h-9 w-9 object-contain rounded-full" alt="" />
-                ) : (
-                  <span className="text-[7px] font-black uppercase text-center leading-tight"
-                        style={{ color: 'rgba(27,47,91,0.3)' }}>{initials}</span>
-                )}
-              </div>
-            </div>
-
-            {/* Signature */}
-            <div className="flex flex-col items-center">
-              {signatureUrl && (
-                <img src={signatureUrl} className="h-10 object-contain mb-1" alt="Firma" />
-              )}
+              <StampedSignature signatureUrl={signatureUrl} settings={settings} imgClass="h-16 object-contain mb-1" />
               <div className="h-px w-36 mb-1" style={{ backgroundColor: '#e2e8f0' }} />
-              <div className="text-[7px] uppercase tracking-widest"
-                   style={{ color: '#94a3b8' }}>REPRESENTANTE LEGAL</div>
+              <div className="text-[7px] uppercase tracking-widest" style={{ color: '#94a3b8' }}>REPRESENTANTE LEGAL</div>
               <div className="text-[9px] font-black" style={{ color: '#334155' }}>{repName}</div>
             </div>
           </div>
@@ -541,7 +647,7 @@ export function CertificateTemplate({ course, enrollment, settings, representati
   );
 }
 
-// ── Custom DOCX template (unchanged) ─────────────────────────────────────────
+// ── Custom DOCX template ──────────────────────────────────────────────────────
 function CustomDocxTemplate({
   templateBlob,
   enrollment,
@@ -574,19 +680,6 @@ function CustomDocxTemplate({
           const bytes = new Uint8Array(buffer);
           for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
           return window.btoa(binary);
-        };
-
-        const urlToBase64 = async (url: string): Promise<string> => {
-          if (!url) return '';
-          try {
-            const resp = await fetch(url, { mode: 'cors' });
-            const blob = await resp.blob();
-            return new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.readAsDataURL(blob);
-            });
-          } catch { return ''; }
         };
 
         const compositeSignatureWithStamp = async (
@@ -721,7 +814,6 @@ function CustomDocxTemplate({
         const filledArrayBuffer = await filledBlob.arrayBuffer();
 
         if (!containerRef.current) return;
-
         containerRef.current.innerHTML = '';
         await renderAsync(filledArrayBuffer, containerRef.current!, undefined, {
           className: 'docx-viewer',
