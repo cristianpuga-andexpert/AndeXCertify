@@ -147,14 +147,32 @@ async function buildSignatureWithStamp(
         if (sh > maxH) { sw = sw * maxH / sh; sh = maxH; }
 
         if (darkBg) {
-          // Draw onto offscreen canvas and invert so it appears white on dark bg
+          // Pixel-level processing:
+          //   near-white pixels  → fully transparent (remove opaque background)
+          //   dark/ink pixels    → white, with alpha proportional to darkness
+          // Result: transparent bg + white signature lines, ready for dark bg.
           const off = document.createElement('canvas');
           off.width = sigImg.width; off.height = sigImg.height;
           const offCtx = off.getContext('2d')!;
           offCtx.drawImage(sigImg, 0, 0);
-          offCtx.globalCompositeOperation = 'difference';
-          offCtx.fillStyle = 'white';
-          offCtx.fillRect(0, 0, off.width, off.height);
+
+          const imgData = offCtx.getImageData(0, 0, off.width, off.height);
+          const px = imgData.data;
+          for (let i = 0; i < px.length; i += 4) {
+            const r = px[i], g = px[i + 1], b = px[i + 2];
+            // Perceived luminance (0 = black, 1 = white)
+            const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+            if (lum > 0.82) {
+              // Background — make transparent
+              px[i + 3] = 0;
+            } else {
+              // Ink — convert to white; alpha scales with darkness
+              const alpha = Math.min(255, Math.round((1 - lum) * 290));
+              px[i] = 255; px[i + 1] = 255; px[i + 2] = 255;
+              px[i + 3] = alpha;
+            }
+          }
+          offCtx.putImageData(imgData, 0, 0);
           ctx.drawImage(off, cx - sw / 2, cy - sh / 2, sw, sh);
         } else {
           ctx.drawImage(sigImg, cx - sw / 2, cy - sh / 2, sw, sh);
