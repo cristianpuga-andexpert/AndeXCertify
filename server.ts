@@ -20,7 +20,7 @@ import { uploadFromBase64, deleteFile, getSignedUrl, isLocalStorage } from './sr
 import { and, eq } from 'drizzle-orm';
 import { db } from './src/db/index';
 import { tenantUsers } from './src/db/schema';
-import { requireAuth, requireSuperAdmin, AuthRequest } from './src/lib/auth-middleware';
+import { requireAuth, requireSuperAdmin, requireTenantAdmin, AuthRequest } from './src/lib/auth-middleware';
 import {
   hashPassword, verifyPassword,
   generateAccessToken, generateRefreshToken, refreshTokenExpiresAt,
@@ -894,7 +894,7 @@ async function startServer() {
   // ─── User management endpoints (admin) ────────────────────────────────────
 
   /** GET /api/admin/users — list users in current tenant */
-  app.get('/api/admin/users', requireAuth, async (req, res) => {
+  app.get('/api/admin/users', requireAuth, requireTenantAdmin, async (req, res) => {
     try {
       const { tenantId } = req as AuthRequest;
       const members      = await db.select().from(tenantUsers).where(eq(tenantUsers.tenantId, tenantId));
@@ -921,7 +921,7 @@ async function startServer() {
    * No password is set here: an invitation email is sent and the invitee
    * defines their own password via /set-password?token=...
    */
-  app.post('/api/admin/create-user', requireAuth, validate(InviteUserSchema), async (req, res) => {
+  app.post('/api/admin/create-user', requireAuth, requireTenantAdmin, validate(InviteUserSchema), async (req, res) => {
     try {
       const { tenantId, userId: inviterId } = req as AuthRequest;
       const { email, displayName, role } = req.body as {
@@ -959,7 +959,7 @@ async function startServer() {
   });
 
   /** GET /api/admin/invitations — pending invitations for the current tenant */
-  app.get('/api/admin/invitations', requireAuth, async (req, res) => {
+  app.get('/api/admin/invitations', requireAuth, requireTenantAdmin, async (req, res) => {
     try {
       const { tenantId } = req as AuthRequest;
       const list = await getPendingInvitationsByTenant(tenantId);
@@ -975,28 +975,39 @@ async function startServer() {
   });
 
   /** DELETE /api/admin/invitations/:id — cancel a pending invitation */
-  app.delete('/api/admin/invitations/:id', requireAuth, async (req, res) => {
+  app.delete('/api/admin/invitations/:id', requireAuth, requireTenantAdmin, async (req, res) => {
     try {
-      await deleteInvitation(req.params.id);
+      const { tenantId } = req as AuthRequest;
+      await deleteInvitation(req.params.id, tenantId); // scoped to caller's tenant
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: 'Error al cancelar invitación', details: err.message });
+      res.status(500).json({ error: 'Error al cancelar invitación' });
     }
   });
 
   /** PATCH /api/admin/users/:id — toggle active status */
-  app.patch('/api/admin/users/:id', requireAuth, async (req, res) => {
+  app.patch('/api/admin/users/:id', requireAuth, requireTenantAdmin, async (req, res) => {
     try {
+      const { tenantId } = req as AuthRequest;
       const { isActive } = req.body as { isActive: boolean };
+
+      // Only allow toggling users who belong to the caller's tenant — never
+      // arbitrary platform users (would otherwise allow locking out other
+      // tenants' users or the superadmin).
+      const membership = await getTenantUser(tenantId, req.params.id);
+      if (!membership) { res.status(404).json({ error: 'Usuario no encontrado en la organización' }); return; }
+
       await setUserActive(req.params.id, isActive);
+      void logAudit(tenantId, (req as AuthRequest).userId,
+        isActive ? 'user.enabled' : 'user.disabled', 'auth', req.params.id, req);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: 'Error al actualizar usuario', details: err.message });
+      res.status(500).json({ error: 'Error al actualizar usuario' });
     }
   });
 
   /** DELETE /api/admin/users/:id — remove user from tenant (not from users table) */
-  app.delete('/api/admin/users/:id', requireAuth, async (req, res) => {
+  app.delete('/api/admin/users/:id', requireAuth, requireTenantAdmin, async (req, res) => {
     try {
       const { tenantId } = req as AuthRequest;
       await db.delete(tenantUsers).where(
@@ -1004,7 +1015,7 @@ async function startServer() {
       );
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: 'Error al eliminar usuario', details: err.message });
+      res.status(500).json({ error: 'Error al eliminar usuario' });
     }
   });
 

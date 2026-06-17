@@ -68,3 +68,19 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
   }
   next();
 }
+
+/**
+ * Secondary guard — must come after requireAuth.
+ * Rejects the request unless the caller administers the current tenant
+ * (role 'admin' for their tenant, or a platform 'superadmin'). Use this on
+ * tenant user-management endpoints so non-admin members (instructor, empresa,
+ * alumno) cannot invite/disable/remove users or escalate privileges.
+ */
+export function requireTenantAdmin(req: Request, res: Response, next: NextFunction): void {
+  const role = (req as AuthRequest).role;
+  if (role !== 'admin' && role !== 'superadmin') {
+    res.status(403).json({ error: 'Permiso insuficiente: se requiere rol de administrador' });
+    return;
+  }
+  next();
+}

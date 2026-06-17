@@ -35,6 +35,9 @@ export async function markInvitationAccepted(token: string): Promise<void> {
   await db.update(invitations).set({ acceptedAt: new Date() }).where(eq(invitations.token, token));
 }
 
-export async function deleteInvitation(id: string): Promise<void> {
-  await db.delete(invitations).where(eq(invitations.id, id));
+/** Deletes a pending invitation, scoped to its tenant to prevent cross-tenant deletion. */
+export async function deleteInvitation(id: string, tenantId: string): Promise<void> {
+  await db.delete(invitations).where(
+    and(eq(invitations.id, id), eq(invitations.tenantId, tenantId))
+  );
 }
