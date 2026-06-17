@@ -1,27 +1,12 @@
-import { createClient } from '@supabase/supabase-js';
+/**
+ * Supabase has been replaced by our self-hosted JWT auth system.
+ * This file is kept as an empty stub during the transition to avoid
+ * import errors from files not yet migrated. Remove once all callers
+ * have been updated to use auth-context / api.ts instead.
+ */
 
-const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
-
-// In DEV mode Supabase is not required — use placeholder values so createClient
-// doesn't throw. The client is never actually called in DEV mode.
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string) || (DEV_MODE ? 'https://dev-placeholder.supabase.co' : '');
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || (DEV_MODE ? 'dev-placeholder-key' : '');
-
-if (!DEV_MODE && (!supabaseUrl || !supabaseAnonKey)) {
-  throw new Error('VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set in .env');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-export const signInWithGoogle = () =>
-  supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: {
-      redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-    },
-  });
-
-export const signInWithEmail = (email: string, password: string) =>
-  supabase.auth.signInWithPassword({ email, password });
-
-export const logOut = () => supabase.auth.signOut();
+// No-op shims so residual imports don't crash during the migration.
+export const supabase = null as unknown as never;
+export const signInWithGoogle = () => { throw new Error('Supabase removed — use useAuth().login()'); };
+export const signInWithEmail  = () => { throw new Error('Supabase removed — use useAuth().login()'); };
+export const logOut           = () => { throw new Error('Supabase removed — use useAuth().logout()'); };

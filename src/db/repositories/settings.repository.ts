@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../index';
 import { organizationSettings, SettingsRow, SettingsInsert } from '../schema';
 import { OrganizationSettings } from '../../types';
@@ -21,22 +21,32 @@ function rowToSettings(row: SettingsRow): OrganizationSettings {
   };
 }
 
-export async function getSettingsByUser(userId: string): Promise<OrganizationSettings | null> {
+export async function getSettingsByUser(
+  userId: string,
+  tenantId: string
+): Promise<OrganizationSettings | null> {
   const rows = await db
     .select()
     .from(organizationSettings)
-    .where(eq(organizationSettings.userId, userId));
+    .where(
+      and(
+        eq(organizationSettings.userId, userId),
+        eq(organizationSettings.tenantId, tenantId)
+      )
+    );
   return rows[0] ? rowToSettings(rows[0]) : null;
 }
 
 export async function upsertSettings(
   userId: string,
+  tenantId: string,
   data: Partial<Omit<OrganizationSettings, 'updatedAt'>>
 ): Promise<OrganizationSettings> {
   const now = new Date();
 
   const values: SettingsInsert = {
     userId,
+    tenantId,
     name:            data.name            ?? '',
     rut:             data.rut             ?? '',
     lema:            data.lema            ?? null,
@@ -54,6 +64,7 @@ export async function upsertSettings(
     .onConflictDoUpdate({
       target: organizationSettings.userId,
       set: {
+        tenantId:        values.tenantId,
         name:            values.name,
         rut:             values.rut,
         lema:            values.lema,

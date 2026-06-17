@@ -19,20 +19,30 @@ function rowToEnrollment(row: EnrollmentRow): Enrollment {
 
 export async function listEnrollmentsByCourse(
   courseId: string,
-  userId: string
+  userId: string,
+  tenantId: string
 ): Promise<Enrollment[]> {
   const rows = await db
     .select()
     .from(enrollments)
-    .where(and(eq(enrollments.courseId, courseId), eq(enrollments.userId, userId)));
+    .where(
+      and(
+        eq(enrollments.courseId, courseId),
+        eq(enrollments.tenantId, tenantId),
+        eq(enrollments.userId, userId)
+      )
+    );
   return rows.map(rowToEnrollment);
 }
 
-export async function listEnrollmentsByUser(userId: string): Promise<Enrollment[]> {
+export async function listEnrollmentsByUser(
+  userId: string,
+  tenantId: string
+): Promise<Enrollment[]> {
   const rows = await db
     .select()
     .from(enrollments)
-    .where(eq(enrollments.userId, userId));
+    .where(and(eq(enrollments.tenantId, tenantId), eq(enrollments.userId, userId)));
   return rows.map(rowToEnrollment);
 }
 
@@ -46,9 +56,11 @@ export async function getEnrollmentById(id: string): Promise<Enrollment | null> 
 
 export async function createEnrollment(
   userId: string,
+  tenantId: string,
   data: Omit<Enrollment, 'id'>
 ): Promise<Enrollment> {
   const insert: EnrollmentInsert = {
+    tenantId,
     userId,
     courseId:               data.courseId,
     studentName:            data.studentName,
@@ -66,6 +78,7 @@ export async function createEnrollment(
 export async function updateEnrollment(
   id: string,
   userId: string,
+  tenantId: string,
   data: Partial<Omit<Enrollment, 'id' | 'courseId'>>
 ): Promise<Enrollment | null> {
   const set: Partial<EnrollmentInsert> = {};
@@ -80,25 +93,44 @@ export async function updateEnrollment(
   const rows = await db
     .update(enrollments)
     .set(set)
-    .where(and(eq(enrollments.id, id), eq(enrollments.userId, userId)))
+    .where(
+      and(
+        eq(enrollments.id, id),
+        eq(enrollments.tenantId, tenantId),
+        eq(enrollments.userId, userId)
+      )
+    )
     .returning();
   return rows[0] ? rowToEnrollment(rows[0]) : null;
 }
 
-export async function removeEnrollment(id: string, userId: string): Promise<void> {
+export async function removeEnrollment(
+  id: string,
+  userId: string,
+  tenantId: string
+): Promise<void> {
   await db
     .delete(enrollments)
-    .where(and(eq(enrollments.id, id), eq(enrollments.userId, userId)));
+    .where(
+      and(
+        eq(enrollments.id, id),
+        eq(enrollments.tenantId, tenantId),
+        eq(enrollments.userId, userId)
+      )
+    );
 }
 
-export async function countEnrollmentsByUser(userId: string): Promise<Record<string, number>> {
+export async function countEnrollmentsByUser(
+  userId: string,
+  tenantId: string
+): Promise<Record<string, number>> {
   const rows = await db
     .select({
       courseId: enrollments.courseId,
       count: sql<number>`cast(count(*) as integer)`,
     })
     .from(enrollments)
-    .where(eq(enrollments.userId, userId))
+    .where(and(eq(enrollments.tenantId, tenantId), eq(enrollments.userId, userId)))
     .groupBy(enrollments.courseId);
 
   return Object.fromEntries(rows.map(r => [r.courseId, r.count]));

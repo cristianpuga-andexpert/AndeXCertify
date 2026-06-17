@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AndeXCertify — Caddy reverse proxy with automatic, on-demand TLS
+#
+# How TLS works here:
+#   • Caddy obtains and auto-renews certificates automatically.
+#   • For multi-tenant domains (subdomains AND tenants' own domains) it uses
+#     ON-DEMAND TLS: the certificate is issued the first time a request arrives
+#     for a hostname — but ONLY after the `ask` endpoint approves it.
+#   • The `ask` endpoint (/api/internal/tls-check) returns 200 only for the base
+#     domain, known tenant subdomains, and VERIFIED custom domains. Everything
+#     else is rejected, preventing certificate-issuance abuse.
+#
+# Requirements for a hostname to get a cert:
+#   • base domain + subdomains: wildcard DNS  *.certify.tudominio.cl → VPS IP
+#   • tenant custom domains:     tenant creates CNAME  their-domain → base domain
+# ─────────────────────────────────────────────────────────────────────────────
+
+{
+	# ACME account email (set ACME_EMAIL in the environment).
+	email {$ACME_EMAIL}
+
+	on_demand_tls {
+		# Caddy asks this endpoint before issuing a cert for any hostname.
+		ask http://app:3000/api/internal/tls-check
+	}
+}
+
+# Catch-all HTTPS site: serves every approved hostname through one config.
+https:// {
+	tls {
+		on_demand
+	}
+
+	encode gzip
+
+	# Match nginx's previous upload ceiling for DOCX/base64 payloads.
+	request_body {
+		max_size 20MB
+	}
+
+	reverse_proxy app:3000 {
+		header_up X-Forwarded-Proto https
+		# Longer timeouts for PDF/certificate generation (LibreOffice can be slow).
+		transport http {
+			read_timeout 120s
+			write_timeout 120s
+		}
+	}
+}

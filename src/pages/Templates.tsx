@@ -79,23 +79,15 @@ export function Templates() {
     setFieldError(null);
     setIsSaving(true);
     try {
-      // 1. Upload file to S3
-      const { s3Key } = await (async () => {
-        const res = await fetch('/api/templates/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileData: newTemplate.fileData,
-            fileName: newTemplate.fileName,
-            userId: user.id,
-          }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(body.error || res.statusText);
+      // 1. Upload file to S3 (via api util → attaches auth token + handles refresh)
+      const { s3Key } = await api.post<{ s3Key: string; publicUrl: string }>(
+        '/api/templates/upload',
+        {
+          fileData: newTemplate.fileData,
+          fileName: newTemplate.fileName,
+          userId: user.id,
         }
-        return res.json() as Promise<{ s3Key: string; publicUrl: string }>;
-      })();
+      );
 
       // 2. Save DB record
       const created = await api.post<CertificateTemplate>('/api/templates', {
@@ -123,9 +115,9 @@ export function Templates() {
 
   const handleDownloadTemplate = async (template: CertificateTemplate) => {
     try {
-      const res = await fetch(`/api/templates/signed-url?key=${encodeURIComponent(template.fileData)}`);
-      if (!res.ok) throw new Error('No se pudo obtener la URL de descarga');
-      const { url } = await res.json();
+      const { url } = await api.get<{ url: string }>(
+        `/api/templates/signed-url?key=${encodeURIComponent(template.fileData)}`
+      );
       const a = document.createElement('a');
       a.href = url;
       a.download = template.fileName || template.name + '.docx';

@@ -1,37 +1,46 @@
 import React, { useState } from 'react';
-import { Award, LogIn, ShieldCheck, Mail, Lock, AlertCircle } from 'lucide-react';
-import { signInWithGoogle, signInWithEmail } from '../lib/supabase';
+import { LogIn, Mail, Lock, AlertCircle, FileCheck2, GraduationCap, Users, CheckCircle2 } from 'lucide-react';
+import logoLight from '../assets/logo-light.png';
+import logoDark  from '../assets/logo-dark.png';
+import { useAuth } from '../lib/auth-context';
 import { motion } from 'motion/react';
 
-const SUPABASE_ERRORS: Record<string, string> = {
-  'Invalid login credentials':    'Correo o contraseña incorrectos.',
-  'Email not confirmed':          'Debes confirmar tu correo antes de ingresar.',
-  'User not found':               'No existe una cuenta con este correo.',
-  'Too many requests':            'Demasiados intentos. Intente más tarde.',
-  'User is banned':               'Esta cuenta ha sido desactivada.',
+const AUTH_ERRORS: Record<string, string> = {
+  'Invalid credentials':             'Correo o contraseña incorrectos.',
+  'Correo o contraseña incorrectos': 'Correo o contraseña incorrectos.',
+  'Account is disabled':             'Esta cuenta ha sido desactivada.',
+  'Too many':                        'Demasiados intentos. Intente más tarde.',
+  'Password must be':                'La contraseña debe tener al menos 8 caracteres.',
+  'already registered':              'Este correo ya está registrado.',
 };
 
 function friendlyError(message: string): string {
-  for (const [key, val] of Object.entries(SUPABASE_ERRORS)) {
+  for (const [key, val] of Object.entries(AUTH_ERRORS)) {
     if (message.includes(key)) return val;
   }
-  return 'Error al iniciar sesión. Intente nuevamente.';
+  return message || 'Error al iniciar sesión. Intente nuevamente.';
 }
 
+const FEATURES = [
+  { icon: FileCheck2,   text: 'Emisión digital de certificados con respaldo en nube' },
+  { icon: GraduationCap, text: 'Gestión completa de cursos y participantes' },
+  { icon: CheckCircle2, text: 'Control de acreditación SENCE integrado' },
+  { icon: Users,        text: 'Administración multi-OTEC desde un solo panel' },
+];
+
 export function LoginView() {
-  const [mode, setMode] = useState<'email' | 'google'>('email');
-  const [email, setEmail] = useState('');
+  const { login } = useAuth();
+  const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error,    setError]    = useState('');
+  const [loading,  setLoading]  = useState(false);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const { error: err } = await signInWithEmail(email, password);
-      if (err) throw err;
+      await login(email, password);
     } catch (err: any) {
       setError(friendlyError(err?.message ?? ''));
     } finally {
@@ -39,143 +48,146 @@ export function LoginView() {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setError('');
-    const { error: err } = await signInWithGoogle();
-    if (err) setError(friendlyError(err.message));
-  };
-
   return (
-    <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center p-6 overflow-hidden relative">
-      <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-indigo-600/10 blur-[180px] rounded-full -translate-y-1/2 translate-x-1/2 animate-pulse" />
-      <div className="absolute bottom-0 left-0 w-[800px] h-[800px] bg-blue-600/5 blur-[180px] rounded-full translate-y-1/2 -translate-x-1/2" />
+    <div className="min-h-screen w-full flex">
 
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, ease: 'circOut' }}
-        className="w-full max-w-md z-10"
-      >
-        {/* Brand */}
-        <div className="flex flex-col items-center mb-10 text-center">
-          <div className="h-20 w-20 bg-brand rounded-3xl shadow-[0_0_50px_rgba(79,70,229,0.3)] flex items-center justify-center mb-6 relative group">
-            <Award className="h-10 w-10 text-white z-10" />
-            <div className="absolute inset-0 bg-white/20 rounded-3xl scale-0 group-hover:scale-100 transition-transform duration-500" />
+      {/* ── Panel izquierdo — branding y propuesta de valor ────────────────── */}
+      <div className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative overflow-hidden bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex-col justify-between p-14">
+
+        {/* Luces de fondo */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(99,102,241,0.18)_0%,_transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,_rgba(79,70,229,0.12)_0%,_transparent_55%)]" />
+
+        {/* Grilla sutil */}
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)',
+            backgroundSize: '56px 56px',
+          }}
+        />
+
+        {/* Círculo decorativo */}
+        <div className="absolute -bottom-32 -right-32 h-[500px] w-[500px] rounded-full border border-white/5" />
+        <div className="absolute -bottom-16 -right-16 h-[320px] w-[320px] rounded-full border border-brand/10" />
+
+        {/* Branding superior */}
+        <div className="relative z-10">
+          <div className="mb-20">
+            <img src={logoDark} alt="AndeXCertify" className="h-28 w-auto max-w-xs" />
           </div>
-          <h2 className="text-white font-black text-2xl tracking-tighter">
-            AndeX<span className="text-brand">Certify</span>
-          </h2>
-          <div className="flex items-center space-x-2 mt-2 opacity-50">
-            <ShieldCheck className="h-3 w-3 text-emerald-400" />
-            <span className="text-[9px] font-black uppercase tracking-[0.4em] text-white">Trust Infrastructure</span>
-          </div>
+
+          <h1 className="text-4xl xl:text-5xl font-black text-white leading-[1.1] tracking-tight mb-5">
+            Plataforma de<br />
+            <span className="text-brand">Certificación</span><br />
+            para OTECs
+          </h1>
+          <p className="text-slate-400 text-[15px] font-medium leading-relaxed max-w-xs">
+            Emite, gestiona y valida certificados digitales de capacitación
+            en un solo lugar, con trazabilidad SENCE.
+          </p>
         </div>
 
-        <div className="card-base bg-white/95 backdrop-blur-2xl p-10 border-white/20 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)]">
-          <div className="flex items-center space-x-2 mb-6 bg-slate-50 px-4 py-1.5 rounded-full border border-slate-100 w-fit mx-auto">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Punto de Acceso</span>
-          </div>
+        {/* Características */}
+        <div className="relative z-10 space-y-4">
+          {FEATURES.map(({ icon: Icon, text }) => (
+            <div key={text} className="flex items-center gap-4">
+              <div className="h-9 w-9 rounded-xl bg-brand/10 border border-brand/20 flex items-center justify-center shrink-0">
+                <Icon className="h-4 w-4 text-brand" />
+              </div>
+              <span className="text-slate-300 text-sm font-medium">{text}</span>
+            </div>
+          ))}
+        </div>
 
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none mb-2 text-center">
-            Protocolo de <span className="text-brand">Emisor</span>
-          </h1>
-          <p className="text-slate-500 text-sm font-medium text-center mb-8">
-            Autorice su acceso para gestionar el registro de certificaciones.
+        {/* Footer */}
+        <div className="relative z-10">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em]">
+            Un producto de AndeXpert Solutions © 2026
           </p>
+        </div>
+      </div>
 
-          {/* Mode toggle */}
-          <div className="flex rounded-xl bg-slate-100 p-1 mb-6">
-            <button
-              onClick={() => { setMode('email'); setError(''); }}
-              className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                mode === 'email' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'
-              }`}
-            >
-              Correo
-            </button>
-            <button
-              onClick={() => { setMode('google'); setError(''); }}
-              className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                mode === 'google' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'
-              }`}
-            >
-              Google
-            </button>
+      {/* ── Panel derecho — formulario ──────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50 relative">
+
+        {/* Branding mobile (solo visible en pantallas pequeñas) */}
+        <div className="lg:hidden flex justify-center mb-10">
+          <img src={logoLight} alt="AndeXCertify" className="h-16 w-auto" />
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: 'easeOut' }}
+          className="w-full max-w-sm"
+        >
+          <div className="mb-8">
+            <h2 className="text-[26px] font-black text-slate-900 tracking-tight">Iniciar sesión</h2>
+            <p className="text-slate-500 text-sm font-medium mt-1.5">
+              Ingresa tus credenciales para acceder a la plataforma
+            </p>
           </div>
 
           {error && (
-            <div className="flex items-center space-x-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-6">
               <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
-              <p className="text-xs font-medium text-red-600">{error}</p>
+              <p className="text-xs font-semibold text-red-600">{error}</p>
             </div>
           )}
 
-          {mode === 'email' ? (
-            <form onSubmit={handleEmailLogin} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
-                  Correo Electrónico
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="correo@ejemplo.com"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand transition-all"
-                  />
-                </div>
+          <form onSubmit={handleEmailLogin} className="space-y-5">
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
+                Correo electrónico
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="correo@otec.cl"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand transition-all shadow-sm"
+                />
               </div>
+            </div>
 
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
-                  Contraseña
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand transition-all"
-                  />
-                </div>
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
+                Contraseña
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand transition-all shadow-sm"
+                />
               </div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full btn-primary py-4 text-[10px] font-black tracking-[0.3em] uppercase shadow-2xl hover:shadow-brand/40 flex items-center justify-center space-x-3 transition-all transform hover:-translate-y-0.5 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed mt-2"
-              >
-                <LogIn className="h-4 w-4" />
-                <span>{loading ? 'Verificando...' : 'Iniciar Sesión'}</span>
-              </button>
-            </form>
-          ) : (
             <button
-              onClick={handleGoogleLogin}
-              className="w-full btn-primary py-5 text-[10px] font-black tracking-[0.3em] uppercase shadow-2xl hover:shadow-brand/40 flex items-center justify-center space-x-3 transition-all transform hover:-translate-y-1 active:scale-95"
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary py-3.5 text-[11px] font-black tracking-[0.2em] uppercase flex items-center justify-center gap-2 mt-1 shadow-lg hover:shadow-brand/30 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <LogIn className="h-5 w-5" />
-              <span>Continuar con Google</span>
+              <LogIn className="h-4 w-4" />
+              <span>{loading ? 'Verificando...' : 'Ingresar'}</span>
             </button>
-          )}
+          </form>
 
-          <div className="mt-10 flex items-center space-x-4 opacity-10 select-none justify-center">
-            <div className="h-px w-8 bg-slate-900" />
-            <span className="text-[9px] font-black text-slate-950 uppercase tracking-widest">Handshake</span>
-            <div className="h-px w-8 bg-slate-900" />
-          </div>
-        </div>
-
-        <div className="mt-12 flex flex-col items-center opacity-40">
-          <p className="text-[8px] font-black text-slate-600 uppercase tracking-[0.4em]">AndeX Certification Authority © 2024</p>
-        </div>
-      </motion.div>
+          <p className="text-center text-[10px] text-slate-400 font-medium mt-10">
+            Un producto de{' '}
+            <span className="text-slate-600 font-bold">AndeXpert Solutions</span> © 2026
+          </p>
+        </motion.div>
+      </div>
     </div>
   );
 }

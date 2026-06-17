@@ -8,11 +8,23 @@ import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
 import fs from 'fs/promises';
 import path from 'path';
 
-// ── DEV mode: local disk storage ──────────────────────────────────────────────
-// When DEV_MODE=true, files are saved to ./dev-storage/ and served via Express
-// at /dev-storage/<key>. S3 is never called.
+// ── Storage driver: local disk vs S3 ──────────────────────────────────────────
+// Local disk: files saved to ./dev-storage/ and served via Express at
+// /dev-storage/<key>. S3 is never called.
+//
+// Selection (decoupled from DEV_MODE so you can run real auth + local storage):
+//   STORAGE_DRIVER=local  → always local disk
+//   STORAGE_DRIVER=s3     → always S3
+//   (unset)               → local if DEV_MODE=true, otherwise S3
 const DEV_MODE = process.env.DEV_MODE === 'true';
 const DEV_STORAGE_DIR = path.resolve(process.cwd(), 'dev-storage');
+
+export function isLocalStorage(): boolean {
+  const driver = process.env.STORAGE_DRIVER;
+  if (driver === 'local') return true;
+  if (driver === 's3')    return false;
+  return DEV_MODE; // backward-compatible default
+}
 
 async function devEnsureDir(key: string): Promise<string> {
   const filePath = path.join(DEV_STORAGE_DIR, key);
@@ -60,10 +72,10 @@ export async function uploadFile(
   key: string,
   mimeType: string
 ): Promise<string> {
-  if (DEV_MODE) {
+  if (isLocalStorage()) {
     const filePath = await devEnsureDir(key);
     await fs.writeFile(filePath, buffer);
-    console.log(`[DEV Storage] Saved: ${filePath}`);
+    console.log(`[Local Storage] Saved: ${filePath}`);
     return devPublicUrl(key);
   }
 
@@ -98,10 +110,10 @@ export async function uploadFromBase64(
  * Delete an object by key. In DEV mode removes from local disk.
  */
 export async function deleteFile(key: string): Promise<void> {
-  if (DEV_MODE) {
+  if (isLocalStorage()) {
     const filePath = path.join(DEV_STORAGE_DIR, key);
     await fs.rm(filePath, { force: true });
-    console.log(`[DEV Storage] Deleted: ${filePath}`);
+    console.log(`[Local Storage] Deleted: ${filePath}`);
     return;
   }
 
@@ -122,7 +134,7 @@ export async function getSignedUrl(
   key: string,
   expiresInSeconds = 3600
 ): Promise<string> {
-  if (DEV_MODE) {
+  if (isLocalStorage()) {
     return devPublicUrl(key);
   }
 

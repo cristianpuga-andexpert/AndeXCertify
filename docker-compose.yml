@@ -2,10 +2,14 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # No 'ports' mapping: Postgres is reachable only on the internal Docker
+    # network (service name 'postgres'), never exposed to the public internet.
+    # For local DB access use: docker compose exec postgres psql ...
     environment:
       POSTGRES_DB: andexcertify
       POSTGRES_USER: andex_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      # Required — compose fails fast if POSTGRES_PASSWORD is unset/empty.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,17 +24,26 @@ services:
       args:
         VITE_DEV_MODE: ${VITE_DEV_MODE:-false}
         VITE_DEV_USER_ID: ${VITE_DEV_USER_ID:-}
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://andex_user:${POSTGRES_PASSWORD:-password}@postgres:5432/andexcertify
+      DATABASE_URL: postgresql://andex_user:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/andexcertify
       DEV_MODE: ${DEV_MODE:-false}
       DEV_USER_ID: ${DEV_USER_ID:-}
-      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      SUPERADMIN_USER_ID: ${SUPERADMIN_USER_ID:-}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-}
       S3_BUCKET: ${S3_BUCKET:-}
@@ -38,28 +51,40 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       APP_URL: ${APP_URL:-http://localhost:3000}
+      BASE_DOMAIN: ${BASE_DOMAIN:?BASE_DOMAIN is required for multi-tenant domains}
       PORT: "3000"
       NODE_ENV: production
-    ports:
-      - "3001:3000"
+    # No public 'ports' mapping: the app is reachable only via the nginx/Caddy
+    # reverse proxy on the internal network, so it can never be hit directly
+    # bypassing TLS. Expose a port here only for local debugging.
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     volumes:
       - dev_storage:/app/dev-storage
 
-  nginx:
-    image: nginx:1.27-alpine
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
       - app
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required for Let's Encrypt}
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - certbot_certs:/etc/letsencrypt:ro
-      - certbot_www:/var/www/certbot:ro
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificates + ACME account (must persist!)
+      - caddy_config:/config
 
 volumes:
   postgres_data:
   dev_storage:
-  certbot_certs:
-  certbot_www:
+  caddy_data:
+  caddy_config:
