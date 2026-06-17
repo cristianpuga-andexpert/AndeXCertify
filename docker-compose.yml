@@ -54,7 +54,7 @@ services:
       BASE_DOMAIN: ${BASE_DOMAIN:?BASE_DOMAIN is required for multi-tenant domains}
       PORT: "3000"
       NODE_ENV: production
-    # No public 'ports' mapping: the app is reachable only via the nginx/Caddy
+    # No public 'ports' mapping: the app is reachable only via the Caddy
     # reverse proxy on the internal network, so it can never be hit directly
     # bypassing TLS. Expose a port here only for local debugging.
     expose:

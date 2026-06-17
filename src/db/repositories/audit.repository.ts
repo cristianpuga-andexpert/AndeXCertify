@@ -22,7 +22,7 @@ export async function logAudit(
   req?:       Request,
 ): Promise<void> {
   try {
-    // Prefer X-Forwarded-For (set by nginx / load-balancer) over socket IP
+    // Prefer X-Forwarded-For (set by the reverse proxy / load-balancer) over socket IP
     const ipAddress = req
       ? ((req.headers['x-forwarded-for'] as string | undefined)
           ?.split(',')[0].trim() ?? req.ip ?? null)
