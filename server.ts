@@ -112,6 +112,21 @@ async function generateUniqueSubdomain(name: string): Promise<string> {
   return candidate;
 }
 
+// ─── Storage key authorization ────────────────────────────────────────────────
+/**
+ * Validates that a template storage key belongs to the caller's tenant.
+ * Keys have the form `templates/<uploaderUserId>/<uuid>.<ext>`; the uploader
+ * must be a member of the requesting tenant. Rejects path traversal and any
+ * key outside the templates/ namespace, so this endpoint can never be used to
+ * read arbitrary objects in the bucket.
+ */
+async function isTemplateKeyInTenant(key: unknown, tenantId: string): Promise<boolean> {
+  if (typeof key !== 'string' || key.includes('..') || key.includes('\\')) return false;
+  const parts = key.split('/');
+  if (parts.length < 3 || parts[0] !== 'templates' || !parts[1]) return false;
+  return !!(await getTenantUser(tenantId, parts[1]));
+}
+
 // Removed unused/deprecated PDF engines as requested by user (mammoth, pdfmake, html-to-pdfmake)
 
 const execAsync = promisify(exec);
@@ -1136,41 +1151,29 @@ async function startServer() {
   });
 
   /**
-   * DELETE /api/templates/s3
-   * Deletes a template file from S3.
-   * Body: { s3Key: string }
-   */
-  app.delete("/api/templates/s3", async (req, res) => {
-    try {
-      const { s3Key } = req.body as { s3Key: string };
-      if (!s3Key) {
-        res.status(400).json({ error: "s3Key is required" });
-        return;
-      }
-      await deleteFile(s3Key);
-      res.json({ ok: true });
-    } catch (err: any) {
-      console.error("[S3 Delete] Error:", err);
-      res.status(500).json({ error: "Delete failed", details: err.message });
-    }
-  });
-
-  /**
    * GET /api/templates/signed-url?key=templates/...
-   * Returns a pre-signed URL for temporary access to a private S3 object.
+   * Returns a pre-signed URL for temporary access to a private template object.
+   * Authenticated + tenant-scoped: the key must belong to the caller's tenant,
+   * so it cannot be used to read arbitrary objects or other tenants' templates.
+   * (Public certificate validation gets its URL from /api/public/validate.)
    */
-  app.get("/api/templates/signed-url", async (req, res) => {
+  app.get("/api/templates/signed-url", requireAuth, async (req, res) => {
     try {
+      const { tenantId } = req as AuthRequest;
       const key = req.query.key as string;
       if (!key) {
         res.status(400).json({ error: "key query parameter is required" });
+        return;
+      }
+      if (!(await isTemplateKeyInTenant(key, tenantId))) {
+        res.status(403).json({ error: "Acceso denegado a este recurso" });
         return;
       }
       const url = await getSignedUrl(key);
       res.json({ url });
     } catch (err: any) {
       console.error("[S3 Signed URL] Error:", err);
-      res.status(500).json({ error: "Could not generate signed URL", details: err.message });
+      res.status(500).json({ error: "Could not generate signed URL" });
     }
   });
 
@@ -1348,7 +1351,17 @@ async function startServer() {
   app.delete('/api/templates/:id', requireAuth, async (req, res) => {
     try {
       const { userId, tenantId } = req as AuthRequest;
+      // Resolve the template first (tenant-checked) so we can delete its file.
+      const tpl = await getTemplateById(req.params.id);
+      if (tpl && tpl.tenantId !== tenantId) {
+        res.status(404).json({ error: 'Plantilla no encontrada' }); return;
+      }
       await removeTemplate(req.params.id, userId, tenantId);
+      // Best-effort delete of the backing storage object (server-side, so the
+      // client never supplies a raw storage key).
+      if (tpl?.fileData) {
+        await deleteFile(tpl.fileData).catch(e => console.warn('[S3 Delete]', e?.message));
+      }
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
@@ -1368,14 +1381,16 @@ async function startServer() {
         listRepresentativesByUser(course.createdBy, course.tenantId),
       ]);
 
-      let templateS3Key: string | null = null;
+      // Resolve the signed template URL server-side (capability-scoped to this
+      // enrollment) so the public page never receives a raw storage key.
+      let templateUrl: string | null = null;
       const builtIn = ['modern', 'diploma', 'classic', 'tech', 'minimal'];
       if (course.templateId && !builtIn.includes(course.templateId)) {
         const tpl = await getTemplateById(course.templateId);
-        templateS3Key = tpl?.fileData ?? null;
+        if (tpl?.fileData) templateUrl = await getSignedUrl(tpl.fileData);
       }
 
-      res.json({ enrollment, course, settings: settings || {}, representatives, templateS3Key });
+      res.json({ enrollment, course, settings: settings || {}, representatives, templateUrl });
     } catch (err: any) {
       console.error('[validate]', err);
       res.status(500).json({ error: 'No fue posible verificar el certificado. Intente nuevamente.' });

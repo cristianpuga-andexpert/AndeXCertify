@@ -135,19 +135,9 @@ export function Templates() {
 
     setIsDeleting(true);
     try {
-      // Find template to get S3 key before deleting DB record
-      const tpl = templates.find(t => t.id === templateToDelete);
-
+      // The server deletes both the DB record and the backing storage object,
+      // tenant-scoped — the client no longer handles raw storage keys.
       await api.del(`/api/templates/${templateToDelete}`);
-
-      // Also delete from S3 if we have the key (fileData holds the S3 key)
-      if (tpl?.fileData) {
-        await fetch('/api/templates/s3', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ s3Key: tpl.fileData }),
-        }).catch(console.warn);
-      }
 
       setTemplates(prev => prev.filter(t => t.id !== templateToDelete));
       setTemplateToDelete(null);

@@ -12,9 +12,9 @@ import { api } from '../lib/api';
 const BUILT_IN_TEMPLATES = ['modern', 'diploma', 'classic'];
 
 async function fetchTemplateBase64FromS3Key(s3Key: string): Promise<string> {
-  const res = await fetch(`/api/templates/signed-url?key=${encodeURIComponent(s3Key)}`);
-  if (!res.ok) throw new Error('No se pudo obtener la URL del template');
-  const { url } = await res.json();
+  const { url } = await api.get<{ url: string }>(
+    `/api/templates/signed-url?key=${encodeURIComponent(s3Key)}`
+  );
   const fileRes = await fetch(url);
   if (!fileRes.ok) throw new Error('No se pudo descargar la plantilla');
   const buf = await fileRes.arrayBuffer();

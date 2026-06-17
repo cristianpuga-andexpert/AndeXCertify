@@ -14,7 +14,7 @@ export function CertificateValidation() {
   const [course, setCourse] = useState<Course | null>(null);
   const [settings, setSettings] = useState<OrganizationSettings | null>(null);
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
-  const [templateS3Key, setTemplateS3Key] = useState<string | null>(null);
+  const [templateUrl, setTemplateUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export function CertificateValidation() {
         setCourse(data.course);
         setSettings(data.settings || null);
         setRepresentatives(data.representatives || []);
-        setTemplateS3Key(data.templateS3Key ?? null);
+        setTemplateUrl(data.templateUrl ?? null);
         console.log('✅ Certificate data loaded:', data.enrollment?.studentName);
       } catch (err: any) {
         console.error('❌ Verification Error:', err);
@@ -214,17 +214,13 @@ export function CertificateValidation() {
       const builtIn = ['modern', 'diploma', 'classic', 'tech', 'minimal'];
       const templateId = course.templateId || 'modern';
 
-      if (!builtIn.includes(templateId) && templateS3Key) {
-        const signedRes = await fetch(`/api/templates/signed-url?key=${encodeURIComponent(templateS3Key)}`);
-        if (signedRes.ok) {
-          const { url } = await signedRes.json();
-          const fileRes = await fetch(url);
-          if (fileRes.ok) {
-            const buf = await fileRes.arrayBuffer();
-            templateBase64 =
-              'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,' +
-              btoa(String.fromCharCode(...new Uint8Array(buf)));
-          }
+      if (!builtIn.includes(templateId) && templateUrl) {
+        const fileRes = await fetch(templateUrl);
+        if (fileRes.ok) {
+          const buf = await fileRes.arrayBuffer();
+          templateBase64 =
+            'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,' +
+            btoa(String.fromCharCode(...new Uint8Array(buf)));
         }
       }
 
