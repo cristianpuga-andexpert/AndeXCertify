@@ -21,9 +21,18 @@ const DEV_STORAGE_DIR = path.resolve(process.cwd(), 'dev-storage');
 
 export function isLocalStorage(): boolean {
   const driver = process.env.STORAGE_DRIVER;
-  if (driver === 'local') return true;
-  if (driver === 's3')    return false;
-  return DEV_MODE; // backward-compatible default
+  const local = driver === 'local' ? true : driver === 's3' ? false : DEV_MODE;
+
+  // Local disk serves unsigned, non-expiring /dev-storage/<key> URLs, which
+  // defeats the signed-URL access control. Never allow it in production —
+  // fail fast instead of silently exposing files.
+  if (local && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[storage] Local disk storage is not allowed in production. ' +
+      'Set STORAGE_DRIVER=s3 and configure the S3_* variables.',
+    );
+  }
+  return local;
 }
 
 async function devEnsureDir(key: string): Promise<string> {
