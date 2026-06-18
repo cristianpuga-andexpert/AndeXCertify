@@ -10,3 +10,4 @@ coverage/
 # Local-only / runtime artifacts
 .claude/
 dev-storage/
+.deploy/

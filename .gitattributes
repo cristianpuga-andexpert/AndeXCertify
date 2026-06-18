@@ -1,0 +1,9 @@
+# Force LF for files that run inside Linux containers, regardless of the OS
+# the repo is checked out on. CRLF in a shell script breaks the shebang
+# (`/usr/bin/env: 'bash\r'`).
+*.sh            text eol=lf
+scripts/*       text eol=lf
+caddy/Caddyfile text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
