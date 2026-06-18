@@ -26,7 +26,7 @@ export function resolveHost(rawHost: string | undefined): HostResolution {
   const host = (rawHost || '').split(':')[0].trim().toLowerCase();
   if (!host) return { kind: 'root' };
 
-  const RESERVED = new Set(['www', 'app', 'api', 'admin']);
+  const RESERVED = new Set(['www', 'app', 'api', 'admin', 'storage']);
 
   // localhost / bare base domain → platform root
   if (host === BASE_DOMAIN || host === 'localhost' || host === '127.0.0.1') {
