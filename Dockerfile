@@ -6,13 +6,9 @@ WORKDIR /app
 # Build-time args for Vite (baked into the frontend bundle)
 ARG VITE_DEV_MODE=false
 ARG VITE_DEV_USER_ID=
-ARG VITE_SUPABASE_URL=
-ARG VITE_SUPABASE_ANON_KEY=
 
 ENV VITE_DEV_MODE=$VITE_DEV_MODE
 ENV VITE_DEV_USER_ID=$VITE_DEV_USER_ID
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
-ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
@@ -24,11 +20,13 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runner
 
 # LibreOffice for DOCX → PDF conversion
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice \
-    libreoffice-writer \
-    fonts-liberation \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      libreoffice \
+      libreoffice-writer \
+      fonts-liberation \
+      fonts-dejavu \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -37,9 +35,10 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json
 
-# Schema for drizzle-kit push (no migration files needed)
+# Drizzle config, schema and versioned migration files for `drizzle-kit migrate`
 COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder /app/src/db/schema.ts ./src/db/schema.ts
+COPY --from=builder /app/drizzle ./drizzle
 
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

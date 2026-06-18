@@ -27,6 +27,7 @@ export interface SenceData {
 
 export interface Course {
   id: string;
+  tenantId: string;
   nameReference: string;
   nameVisible: string;
   type: CourseType;
@@ -82,9 +83,10 @@ export interface Representative {
 
 export interface CertificateTemplate {
   id: string;
+  tenantId: string;
   name: string;
   type: 'sence' | 'non-sence';
-  fileData: string; // Base64 Word file
+  fileData: string; // Base64 Word file / S3 key
   fileName: string;
   isCompressed?: boolean;
   createdAt: string;

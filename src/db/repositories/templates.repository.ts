@@ -8,6 +8,7 @@ import { CertificateTemplate } from '../../types';
 function rowToTemplate(row: TemplateRow): CertificateTemplate {
   return {
     id:           row.id,
+    tenantId:     row.tenantId,
     name:         row.name,
     type:         row.type as CertificateTemplate['type'],
     fileData:     row.s3Key,   // S3 key stored in the fileData field of the TS interface
@@ -20,11 +21,14 @@ function rowToTemplate(row: TemplateRow): CertificateTemplate {
   };
 }
 
-export async function listTemplatesByUser(userId: string): Promise<CertificateTemplate[]> {
+export async function listTemplatesByUser(
+  userId: string,
+  tenantId: string
+): Promise<CertificateTemplate[]> {
   const rows = await db
     .select()
     .from(certificateTemplates)
-    .where(eq(certificateTemplates.userId, userId));
+    .where(and(eq(certificateTemplates.tenantId, tenantId), eq(certificateTemplates.userId, userId)));
   return rows.map(rowToTemplate);
 }
 
@@ -38,9 +42,11 @@ export async function getTemplateById(id: string): Promise<CertificateTemplate |
 
 export async function createTemplate(
   userId: string,
+  tenantId: string,
   data: { name: string; type: 'sence' | 'non-sence'; s3Key: string; fileName: string }
 ): Promise<CertificateTemplate> {
   const insert: TemplateInsert = {
+    tenantId,
     userId,
     name:     data.name,
     type:     data.type,
@@ -51,8 +57,18 @@ export async function createTemplate(
   return rowToTemplate(row);
 }
 
-export async function removeTemplate(id: string, userId: string): Promise<void> {
+export async function removeTemplate(
+  id: string,
+  userId: string,
+  tenantId: string
+): Promise<void> {
   await db
     .delete(certificateTemplates)
-    .where(and(eq(certificateTemplates.id, id), eq(certificateTemplates.userId, userId)));
+    .where(
+      and(
+        eq(certificateTemplates.id, id),
+        eq(certificateTemplates.tenantId, tenantId),
+        eq(certificateTemplates.userId, userId)
+      )
+    );
 }

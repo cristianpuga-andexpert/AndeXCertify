@@ -48,10 +48,20 @@ async function buildSignatureWithStamp(
   darkBg = false
 ): Promise<string> {
   const W = 440, H = 200;
+  const BG = '#1B2F5B'; // navy — used as opaque backing for darkBg to avoid html2canvas PNG-alpha bug
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!;
   ctx.clearRect(0, 0, W, H);
+
+  // html2canvas does not correctly composite transparent-background PNGs onto
+  // dark containers — it renders them with a white fill instead.  For dark
+  // backgrounds we therefore paint the canvas opaque (navy) first so the final
+  // PNG contains no alpha channel areas that need compositing.
+  if (darkBg) {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   const cx = W / 2, cy = H / 2;
   const stampColor = darkBg ? '#ffffff' : '#1B2F5B';

@@ -11,6 +11,7 @@ function toISO(d: Date | string | null | undefined): string {
 function rowToCourse(row: CourseRow): Course {
   return {
     id:             row.id,
+    tenantId:       row.tenantId,
     nameReference:  row.nameReference,
     nameVisible:    row.nameVisible,
     type:           row.type as CourseType,
@@ -27,11 +28,14 @@ function rowToCourse(row: CourseRow): Course {
   };
 }
 
-export async function listCoursesByUser(userId: string): Promise<Course[]> {
+export async function listCoursesByUser(
+  userId: string,
+  tenantId: string
+): Promise<Course[]> {
   const rows = await db
     .select()
     .from(courses)
-    .where(eq(courses.userId, userId));
+    .where(and(eq(courses.tenantId, tenantId), eq(courses.userId, userId)));
   return rows.map(rowToCourse);
 }
 
@@ -45,9 +49,11 @@ export async function getCourseById(id: string): Promise<Course | null> {
 
 export async function createCourse(
   userId: string,
-  data: Omit<Course, 'id' | 'createdAt' | 'createdBy'>
+  tenantId: string,
+  data: Omit<Course, 'id' | 'createdAt' | 'createdBy' | 'tenantId'>
 ): Promise<Course> {
   const insert: CourseInsert = {
+    tenantId,
     userId,
     nameReference:  data.nameReference,
     nameVisible:    data.nameVisible,
@@ -68,7 +74,8 @@ export async function createCourse(
 export async function updateCourse(
   id: string,
   userId: string,
-  data: Partial<Omit<Course, 'id' | 'createdAt' | 'createdBy'>>
+  tenantId: string,
+  data: Partial<Omit<Course, 'id' | 'createdAt' | 'createdBy' | 'tenantId'>>
 ): Promise<Course | null> {
   const set: Partial<CourseInsert> = {};
   if (data.nameReference  !== undefined) set.nameReference  = data.nameReference;
@@ -86,13 +93,17 @@ export async function updateCourse(
   const rows = await db
     .update(courses)
     .set(set)
-    .where(and(eq(courses.id, id), eq(courses.userId, userId)))
+    .where(and(eq(courses.id, id), eq(courses.tenantId, tenantId), eq(courses.userId, userId)))
     .returning();
   return rows[0] ? rowToCourse(rows[0]) : null;
 }
 
-export async function removeCourse(id: string, userId: string): Promise<void> {
+export async function removeCourse(
+  id: string,
+  userId: string,
+  tenantId: string
+): Promise<void> {
   await db
     .delete(courses)
-    .where(and(eq(courses.id, id), eq(courses.userId, userId)));
+    .where(and(eq(courses.id, id), eq(courses.tenantId, tenantId), eq(courses.userId, userId)));
 }

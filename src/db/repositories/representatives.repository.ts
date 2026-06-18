@@ -15,30 +15,42 @@ function rowToRep(row: RepRow): Representative {
   };
 }
 
-export async function listRepresentativesByUser(userId: string): Promise<Representative[]> {
+export async function listRepresentativesByUser(
+  userId: string,
+  tenantId: string
+): Promise<Representative[]> {
   const rows = await db
     .select()
     .from(representatives)
-    .where(eq(representatives.userId, userId));
+    .where(and(eq(representatives.tenantId, tenantId), eq(representatives.userId, userId)));
   return rows.map(rowToRep);
 }
 
 export async function getRepresentativeById(
   id: string,
-  userId: string
+  userId: string,
+  tenantId: string
 ): Promise<Representative | null> {
   const rows = await db
     .select()
     .from(representatives)
-    .where(and(eq(representatives.id, id), eq(representatives.userId, userId)));
+    .where(
+      and(
+        eq(representatives.id, id),
+        eq(representatives.tenantId, tenantId),
+        eq(representatives.userId, userId)
+      )
+    );
   return rows[0] ? rowToRep(rows[0]) : null;
 }
 
 export async function createRepresentative(
   userId: string,
+  tenantId: string,
   data: Omit<Representative, 'id' | 'createdAt'>
 ): Promise<Representative> {
   const insert: RepInsert = {
+    tenantId,
     userId,
     name:         data.name,
     rut:          data.rut,
@@ -48,8 +60,18 @@ export async function createRepresentative(
   return rowToRep(row);
 }
 
-export async function removeRepresentative(id: string, userId: string): Promise<void> {
+export async function removeRepresentative(
+  id: string,
+  userId: string,
+  tenantId: string
+): Promise<void> {
   await db
     .delete(representatives)
-    .where(and(eq(representatives.id, id), eq(representatives.userId, userId)));
+    .where(
+      and(
+        eq(representatives.id, id),
+        eq(representatives.tenantId, tenantId),
+        eq(representatives.userId, userId)
+      )
+    );
 }

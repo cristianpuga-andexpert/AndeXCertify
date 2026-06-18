@@ -1,92 +1,78 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, UserPlus, Shield, ShieldOff, Trash2, X, Eye, EyeOff, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
+import { Users, UserPlus, Shield, ShieldOff, Trash2, X, AlertCircle, CheckCircle, RefreshCw, Mail, Clock, Copy } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
-import { supabase } from '../lib/supabase';
+import { api } from '../lib/api';
 import { AppUser } from '../types';
 import { cn } from '../lib/utils';
 
-interface CreateUserForm {
+interface InviteForm {
   email: string;
-  password: string;
   displayName: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'instructor' | 'empresa' | 'alumno';
 }
 
-const INITIAL_FORM: CreateUserForm = {
-  email: '',
-  password: '',
-  displayName: '',
-  role: 'user',
+interface PendingInvite {
+  id: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+const INITIAL_FORM: InviteForm = { email: '', displayName: '', role: 'admin' };
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Administrador', instructor: 'Instructor', empresa: 'Empresa', alumno: 'Alumno', user: 'Usuario',
 };
 
 export function UserManagement() {
   const { user } = useAuth();
-  const isAdmin = !!user; // TODO: implement role check via API in Task 5
-  const [users, setUsers] = useState<AppUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [rulesError, setRulesError] = useState(false);
+  const isAdmin = !!user;
+  const [users, setUsers]       = useState<AppUser[]>([]);
+  const [invites, setInvites]   = useState<PendingInvite[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState<CreateUserForm>(INITIAL_FORM);
-  const [showPass, setShowPass] = useState(false);
+  const [form, setForm]         = useState<InviteForm>(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState('');
+  const [formError, setFormError]   = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const getToken = async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) throw new Error('No autenticado');
-    return token;
-  };
-
-  const fetchUsers = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    setRulesError(false);
     try {
-      const token = await getToken();
-      const res = await fetch('/api/admin/users', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 403) {
-        setRulesError(true);
-        setUsers([]);
-        return;
-      }
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Error al cargar usuarios');
-      setUsers(data.users ?? []);
-    } catch (err: any) {
-      if (err.message?.includes('rules') || err.message?.includes('PERMISSION_DENIED')) {
-        setRulesError(true);
-      }
+      const [u, inv] = await Promise.all([
+        api.get<{ users: AppUser[] }>('/api/admin/users'),
+        api.get<{ invitations: PendingInvite[] }>('/api/admin/invitations'),
+      ]);
+      setUsers(u.users ?? []);
+      setInvites(inv.invitations ?? []);
+    } catch {
+      setUsers([]); setInvites([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (isAdmin) fetchUsers();
-  }, [isAdmin, fetchUsers]);
+  useEffect(() => { if (isAdmin) fetchData(); }, [isAdmin, fetchData]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError('');
+    setFormError(''); setInviteLink(null);
     setSubmitting(true);
     try {
-      const token = await getToken();
-      const res = await fetch('/api/admin/create-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Error al crear usuario');
-      setSuccessMsg(`Usuario ${form.email} creado exitosamente.`);
+      const res = await api.post<{ emailSent: boolean; inviteLink?: string }>('/api/admin/create-user', form);
       setShowModal(false);
+      if (res.emailSent) {
+        setSuccessMsg(`Invitación enviada a ${form.email}.`);
+      } else {
+        setSuccessMsg(`Invitación creada para ${form.email}. SMTP no configurado — copia el enlace abajo.`);
+        setInviteLink(res.inviteLink ?? null);
+      }
       setForm(INITIAL_FORM);
-      await fetchUsers();
-      setTimeout(() => setSuccessMsg(''), 4000);
+      await fetchData();
+      setTimeout(() => setSuccessMsg(''), 8000);
     } catch (err: any) {
       setFormError(err.message);
     } finally {
@@ -94,46 +80,32 @@ export function UserManagement() {
     }
   };
 
-  const handleToggleActive = async (user: AppUser) => {
-    setActionLoading(user.id);
+  const handleToggleActive = async (u: AppUser) => {
+    setActionLoading(u.id);
     try {
-      const token = await getToken();
-      const res = await fetch(`/api/admin/users/${user.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ isActive: !user.isActive }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? 'Error al actualizar usuario');
-      }
-      await fetchUsers();
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setActionLoading(null);
-    }
+      await api.patch(`/api/admin/users/${u.id}`, { isActive: !u.isActive });
+      await fetchData();
+    } catch (err: any) { alert(err.message); }
+    finally { setActionLoading(null); }
   };
 
-  const handleDelete = async (user: AppUser) => {
-    if (!confirm(`¿Eliminar permanentemente a ${user.email}? Esta acción no se puede deshacer.`)) return;
-    setActionLoading(user.id);
+  const handleDelete = async (u: AppUser) => {
+    if (!confirm(`¿Quitar a ${u.email} de la organización?`)) return;
+    setActionLoading(u.id);
     try {
-      const token = await getToken();
-      const res = await fetch(`/api/admin/users/${user.id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? 'Error al eliminar usuario');
-      }
-      await fetchUsers();
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setActionLoading(null);
-    }
+      await api.del(`/api/admin/users/${u.id}`);
+      await fetchData();
+    } catch (err: any) { alert(err.message); }
+    finally { setActionLoading(null); }
+  };
+
+  const handleCancelInvite = async (id: string) => {
+    setActionLoading(id);
+    try {
+      await api.del(`/api/admin/invitations/${id}`);
+      await fetchData();
+    } catch (err: any) { alert(err.message); }
+    finally { setActionLoading(null); }
   };
 
   if (!isAdmin) {
@@ -156,44 +128,74 @@ export function UserManagement() {
             <div className="h-1 w-1 rounded-full bg-slate-400"></div>
             <span>Opciones Globales</span>
           </div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-none">Gestión de <span className="text-brand">Usuarios</span></h1>
-          <p className="text-slate-500 mt-2 font-medium text-xs uppercase tracking-widest opacity-60">Cuentas de acceso a la plataforma</p>
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-none">
+            Gestión de <span className="text-brand">Usuarios</span>
+          </h1>
+          <p className="text-slate-500 mt-2 font-medium text-xs uppercase tracking-widest opacity-60">
+            Invita y administra el acceso de tu organización
+          </p>
         </div>
         <button
           onClick={() => { setShowModal(true); setFormError(''); setForm(INITIAL_FORM); }}
           className="btn-primary flex items-center space-x-2 px-5 py-3 text-[10px] font-black tracking-widest uppercase"
         >
           <UserPlus className="h-4 w-4" />
-          <span>Nuevo Usuario</span>
+          <span>Invitar Usuario</span>
         </button>
       </div>
 
       {/* Success banner */}
       {successMsg && (
-        <div className="flex items-center space-x-2 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4 mb-6">
-          <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-          <p className="text-sm font-medium text-emerald-700">{successMsg}</p>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4 mb-6">
+          <div className="flex items-center space-x-2">
+            <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+            <p className="text-sm font-medium text-emerald-700">{successMsg}</p>
+          </div>
+          {inviteLink && (
+            <div className="flex items-center gap-2 mt-3 bg-white border border-emerald-200 rounded-lg px-3 py-2">
+              <input readOnly value={inviteLink} onFocus={e => e.currentTarget.select()}
+                className="flex-1 bg-transparent text-[11px] font-mono text-brand outline-none truncate" />
+              <button onClick={() => navigator.clipboard.writeText(inviteLink)}
+                className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-brand">
+                <Copy className="h-3 w-3" /> Copiar
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Rules not deployed banner */}
-      {rulesError && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-6">
-          <div className="flex items-start space-x-3">
-            <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-black text-amber-800 mb-1">Reglas de Firestore pendientes</p>
-              <p className="text-xs text-amber-700 mb-3">
-                Para listar usuarios desde Firestore, debes desplegar las reglas de seguridad actualizadas.
-                Ejecuta en la terminal del proyecto:
-              </p>
-              <code className="block bg-amber-900/10 text-amber-900 text-xs font-mono px-4 py-2 rounded-lg">
-                firebase login &amp;&amp; firebase deploy --only firestore:rules
-              </code>
-              <p className="text-xs text-amber-600 mt-2">
-                Los usuarios creados a través de esta pantalla quedan activos en Firebase Auth aunque no aparezcan en la lista.
-              </p>
-            </div>
+      {/* Pending invitations */}
+      {invites.length > 0 && (
+        <div className="bg-amber-50 rounded-2xl border border-amber-200 overflow-hidden mb-6">
+          <div className="px-6 py-3 border-b border-amber-200 flex items-center gap-2">
+            <Clock className="h-3.5 w-3.5 text-amber-600" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+              Invitaciones pendientes ({invites.length})
+            </span>
+          </div>
+          <div className="divide-y divide-amber-100">
+            {invites.map(inv => (
+              <div key={inv.id} className="flex items-center justify-between px-6 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                    <Mail className="h-4 w-4 text-amber-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">{inv.email}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {ROLE_LABELS[inv.role] ?? inv.role} · expira {new Date(inv.expiresAt).toLocaleDateString('es-CL')}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleCancelInvite(inv.id)}
+                  disabled={actionLoading === inv.id}
+                  className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  {actionLoading === inv.id ? '…' : 'Cancelar'}
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -204,11 +206,11 @@ export function UserManagement() {
           <div className="flex items-center justify-center py-20">
             <RefreshCw className="h-6 w-6 text-brand animate-spin" />
           </div>
-        ) : users.length === 0 && !rulesError ? (
+        ) : users.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center px-8">
             <Users className="h-10 w-10 text-slate-300 mb-4" />
-            <p className="text-slate-500 font-medium">No hay usuarios registrados aún.</p>
-            <p className="text-slate-400 text-sm mt-1">Crea el primer usuario con el botón de arriba.</p>
+            <p className="text-slate-500 font-medium">No hay usuarios activos aún.</p>
+            <p className="text-slate-400 text-sm mt-1">Invita al primero con el botón de arriba.</p>
           </div>
         ) : (
           <table className="w-full">
@@ -238,12 +240,10 @@ export function UserManagement() {
                   <td className="px-6 py-4">
                     <span className={cn(
                       'inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider',
-                      u.role === 'admin'
-                        ? 'bg-brand/10 text-brand'
-                        : 'bg-slate-100 text-slate-600'
+                      u.role === 'admin' ? 'bg-brand/10 text-brand' : 'bg-slate-100 text-slate-600'
                     )}>
                       <Shield className="h-3 w-3" />
-                      <span>{u.role === 'admin' ? 'Administrador' : 'Usuario'}</span>
+                      <span>{ROLE_LABELS[u.role] ?? u.role}</span>
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -267,23 +267,16 @@ export function UserManagement() {
                         title={u.isActive ? 'Desactivar' : 'Activar'}
                         className={cn(
                           'h-8 w-8 flex items-center justify-center rounded-lg transition-colors',
-                          u.isActive
-                            ? 'text-slate-400 hover:text-amber-500 hover:bg-amber-50'
-                            : 'text-slate-400 hover:text-emerald-500 hover:bg-emerald-50'
+                          u.isActive ? 'text-slate-400 hover:text-amber-500 hover:bg-amber-50' : 'text-slate-400 hover:text-emerald-500 hover:bg-emerald-50'
                         )}
                       >
-                        {actionLoading === u.id ? (
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                        ) : u.isActive ? (
-                          <ShieldOff className="h-4 w-4" />
-                        ) : (
-                          <Shield className="h-4 w-4" />
-                        )}
+                        {actionLoading === u.id ? <RefreshCw className="h-4 w-4 animate-spin" />
+                          : u.isActive ? <ShieldOff className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
                       </button>
                       <button
                         onClick={() => handleDelete(u)}
                         disabled={actionLoading === u.id}
-                        title="Eliminar"
+                        title="Quitar de la organización"
                         className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -297,25 +290,22 @@ export function UserManagement() {
         )}
       </div>
 
-      {/* Create User Modal */}
+      {/* Invite User Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <ModalWrapper>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
               <div className="flex items-center justify-between p-6 border-b border-slate-100">
                 <div>
-                  <h2 className="text-lg font-black text-slate-900 tracking-tight">Crear Nuevo Usuario</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">El usuario podrá acceder con correo y contraseña.</p>
+                  <h2 className="text-lg font-black text-slate-900 tracking-tight">Invitar Usuario</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">Recibirá un correo para definir su contraseña.</p>
                 </div>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                >
+                <button onClick={() => setShowModal(false)} className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <form onSubmit={handleCreate} className="p-6 space-y-5">
+              <form onSubmit={handleInvite} className="p-6 space-y-5">
                 {formError && (
                   <div className="flex items-center space-x-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                     <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
@@ -324,13 +314,9 @@ export function UserManagement() {
                 )}
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
-                    Nombre Completo
-                  </label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Nombre completo <span className="text-slate-400 normal-case tracking-normal">(opcional)</span></label>
                   <input
-                    type="text"
-                    required
-                    value={form.displayName}
+                    type="text" value={form.displayName}
                     onChange={(e) => setForm({ ...form, displayName: e.target.value })}
                     placeholder="Juan Pérez"
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
@@ -338,13 +324,9 @@ export function UserManagement() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
-                    Correo Electrónico
-                  </label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Correo electrónico</label>
                   <input
-                    type="email"
-                    required
-                    value={form.email}
+                    type="email" required value={form.email}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
                     placeholder="correo@ejemplo.com"
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
@@ -352,57 +334,27 @@ export function UserManagement() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
-                    Contraseña
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPass ? 'text' : 'password'}
-                      required
-                      minLength={8}
-                      value={form.password}
-                      onChange={(e) => setForm({ ...form, password: e.target.value })}
-                      placeholder="Mínimo 8 caracteres"
-                      className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPass(!showPass)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    >
-                      {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
-                    Rol
-                  </label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Rol</label>
                   <select
                     value={form.role}
-                    onChange={(e) => setForm({ ...form, role: e.target.value as 'admin' | 'user' })}
+                    onChange={(e) => setForm({ ...form, role: e.target.value as InviteForm['role'] })}
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
                   >
-                    <option value="user">Usuario</option>
                     <option value="admin">Administrador</option>
+                    <option value="instructor">Instructor</option>
+                    <option value="empresa">Empresa</option>
+                    <option value="alumno">Alumno</option>
                   </select>
                 </div>
 
                 <div className="flex space-x-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="flex-1 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors"
-                  >
+                  <button type="button" onClick={() => setShowModal(false)}
+                    className="flex-1 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors">
                     Cancelar
                   </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="flex-1 btn-primary py-3 text-[10px] font-black tracking-widest uppercase disabled:opacity-60"
-                  >
-                    {submitting ? 'Creando...' : 'Crear Usuario'}
+                  <button type="submit" disabled={submitting}
+                    className="flex-1 btn-primary py-3 text-[10px] font-black tracking-widest uppercase disabled:opacity-60">
+                    {submitting ? 'Enviando...' : 'Enviar invitación'}
                   </button>
                 </div>
               </form>
@@ -416,11 +368,7 @@ export function UserManagement() {
 
 function ModalWrapper({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        animation: 'modalIn 0.2s ease-out',
-      }}
-    >
+    <div style={{ animation: 'modalIn 0.2s ease-out' }}>
       <style>{`@keyframes modalIn { from { opacity:0; transform:scale(0.95) } to { opacity:1; transform:scale(1) } }`}</style>
       {children}
     </div>

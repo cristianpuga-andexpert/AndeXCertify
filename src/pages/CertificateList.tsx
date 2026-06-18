@@ -3,7 +3,6 @@ import { useParams, Link } from 'react-router-dom';
 import { Enrollment, Course, OrganizationSettings, Representative, CertificateTemplate as ITemplate, EnrollmentStatus } from '../types';
 import { ArrowLeft, Download, UserCheck, Printer, Award, Loader2, AlertCircle, X, Terminal, Copy, Check } from 'lucide-react';
 import { cn, formatRut } from '../lib/utils';
-import { CertificateTemplate } from '../components/certificates/CertificateTemplate';
 import { useAuth } from '../lib/auth-context';
 import { format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
@@ -13,9 +12,9 @@ import { api } from '../lib/api';
 const BUILT_IN_TEMPLATES = ['modern', 'diploma', 'classic'];
 
 async function fetchTemplateBase64FromS3Key(s3Key: string): Promise<string> {
-  const res = await fetch(`/api/templates/signed-url?key=${encodeURIComponent(s3Key)}`);
-  if (!res.ok) throw new Error('No se pudo obtener la URL del template');
-  const { url } = await res.json();
+  const { url } = await api.get<{ url: string }>(
+    `/api/templates/signed-url?key=${encodeURIComponent(s3Key)}`
+  );
   const fileRes = await fetch(url);
   if (!fileRes.ok) throw new Error('No se pudo descargar la plantilla');
   const buf = await fileRes.arrayBuffer();
@@ -35,7 +34,6 @@ export function CertificateList() {
   const [customTemplateS3Key, setCustomTemplateS3Key] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
-  const [previewStudent, setPreviewStudent] = useState<Enrollment | null>(null);
   const [previewMode, setPreviewMode] = useState<string>('modern');
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -58,8 +56,6 @@ export function CertificateList() {
         setSettings(Object.keys(s).length > 0 ? s : null);
         setRepresentatives(reps);
         setStudents(enrollments);
-
-        if (enrollments.length > 0) setPreviewStudent(enrollments[0]);
 
         // Determine preview mode
         if (c.templateId && !BUILT_IN_TEMPLATES.includes(c.templateId)) {
@@ -212,15 +208,11 @@ export function CertificateList() {
           }
         }
 
-        const response = await fetch('/api/generate-certificate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            templateBase64: templateData,
-            data: markerData,
-            images: { FIRMA: rawSignatureBase64, FIRMA_OTEC: rawSignatureBase64, QR: qrBase64, TIMBRE: '' },
-            stampConfig: stampConfigForBatch
-          })
+        const response = await api.postRaw('/api/generate-certificate', {
+          templateBase64: templateData,
+          data: markerData,
+          images: { FIRMA: rawSignatureBase64, FIRMA_OTEC: rawSignatureBase64, QR: qrBase64, TIMBRE: '' },
+          stampConfig: stampConfigForBatch
         });
 
         if (response.ok) {
@@ -257,81 +249,10 @@ export function CertificateList() {
   };
 
   const handleDownloadPDF = async (studentIds: string[]) => {
-    if (studentIds.length === 0 || !course) return;
-    if (isExporting) return;
+    if (studentIds.length === 0 || !course || isExporting) return;
+    if (!customTemplateS3Key) return; // PDF export requires a custom DOCX template
 
     setIsExporting(true);
-    setExportProgress(5);
-
-    // ── Plantillas nativas → html2canvas + jsPDF ──────────────────────────────
-    if (BUILT_IN_TEMPLATES.includes(previewMode)) {
-      try {
-        const h2c = (await import('html2canvas')).default;
-        const { jsPDF } = await import('jspdf');
-        const selectedData = students.filter(s => studentIds.includes(s.id));
-        const pdfs: { name: string; blob: Blob }[] = [];
-
-        for (let i = 0; i < selectedData.length; i++) {
-          const student = selectedData[i];
-          setExportProgress(Math.round(10 + (i / selectedData.length) * 75));
-
-          // Apunta el contenedor off-screen a este alumno y espera render
-          setPreviewStudent(student);
-          await new Promise(r => setTimeout(r, 700));
-
-          const certEl = document.getElementById(`cert-${student.id}`);
-          if (!certEl) { console.warn(`cert-${student.id} no encontrado`); continue; }
-
-          const canvas = await h2c(certEl, {
-            scale: 2,
-            useCORS: true,
-            allowTaint: true,
-            backgroundColor: '#ffffff',
-            logging: false,
-          });
-
-          // A4 portrait 794×1123 → 210×297 mm
-          const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-          pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, 297);
-          pdfs.push({
-            name: `Certificado_${student.studentName.replace(/\s+/g, '_')}_${(course.nameVisible || '').replace(/\s+/g, '_')}.pdf`,
-            blob: pdf.output('blob'),
-          });
-        }
-
-        setExportProgress(90);
-
-        if (pdfs.length === 1) {
-          const url = URL.createObjectURL(pdfs[0].blob);
-          const a = document.createElement('a');
-          a.href = url; a.download = pdfs[0].name;
-          document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        } else {
-          const JSZipMod = (await import('jszip')).default;
-          const zip = new JSZipMod();
-          pdfs.forEach(({ name, blob }) => zip.file(name, blob));
-          const zipBlob = await zip.generateAsync({ type: 'blob' });
-          const url = URL.createObjectURL(zipBlob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `Certificados_${(course.nameVisible || 'Lote').replace(/\s+/g, '_')}.zip`;
-          document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }
-
-        setExportProgress(100);
-      } catch (err: any) {
-        console.error('PDF generation error (builtin):', err);
-        alert('Error al generar PDF: ' + (err?.message || String(err)));
-      } finally {
-        setIsExporting(false);
-        setExportProgress(0);
-      }
-      return;
-    }
-
-    // ── Plantilla Word personalizada → servidor ───────────────────────────────
     setExportProgress(10);
 
     try {
@@ -417,15 +338,11 @@ export function CertificateList() {
         const qrBase64 = await getQRBase64(student.id);
         setExportProgress(50);
 
-        const response = await fetch('/api/generate-certificate-pdf', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            templateBase64: templateData,
-            data: buildMarkers(student),
-            images: { FIRMA: rawSignatureBase64, FIRMA_OTEC: rawSignatureBase64, QR: qrBase64, TIMBRE: '' },
-            stampConfig: stampConfigForBatch
-          })
+        const response = await api.postRaw('/api/generate-certificate-pdf', {
+          templateBase64: templateData,
+          data: buildMarkers(student),
+          images: { FIRMA: rawSignatureBase64, FIRMA_OTEC: rawSignatureBase64, QR: qrBase64, TIMBRE: '' },
+          stampConfig: stampConfigForBatch
         });
 
         if (!response.ok) {
@@ -452,15 +369,11 @@ export function CertificateList() {
           setExportProgress(20 + Math.round((i / selectedData.length) * 70));
           const qrBase64 = await getQRBase64(student.id);
 
-          const response = await fetch('/api/generate-certificate-pdf', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              templateBase64: templateData,
-              data: buildMarkers(student),
-              images: { FIRMA: rawSignatureBase64, FIRMA_OTEC: rawSignatureBase64, QR: qrBase64, TIMBRE: '' },
-              stampConfig: stampConfigForBatch
-            })
+          const response = await api.postRaw('/api/generate-certificate-pdf', {
+            templateBase64: templateData,
+            data: buildMarkers(student),
+            images: { FIRMA: rawSignatureBase64, FIRMA_OTEC: rawSignatureBase64, QR: qrBase64, TIMBRE: '' },
+            stampConfig: stampConfigForBatch
           });
 
           if (!response.ok) {
@@ -583,8 +496,14 @@ export function CertificateList() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => handleDownloadPDF(selectedStudents)}
-                disabled={selectedStudents.length === 0 || isExporting}
-                title={selectedStudents.length === 0 ? 'Selecciona al menos un participante' : `Descargar ${selectedStudents.length} certificado(s) en PDF`}
+                disabled={selectedStudents.length === 0 || isExporting || !customTemplateS3Key}
+                title={
+                  !customTemplateS3Key
+                    ? 'PDF requiere una plantilla Word personalizada'
+                    : selectedStudents.length === 0
+                    ? 'Selecciona al menos un participante'
+                    : `Descargar ${selectedStudents.length} certificado(s) en PDF`
+                }
                 className="btn-primary flex items-center space-x-2 py-2.5 px-5 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Award className="h-4 w-4" />}
@@ -684,24 +603,6 @@ export function CertificateList() {
         ))}
         <div id="docx-render-hidden" style={{ opacity: 0, pointerEvents: 'none', position: 'absolute', top: -9999, width: '210mm', minHeight: '297mm' }} />
       </div>
-
-      {isExporting && (
-        <div className="fixed -left-[4000px] top-0 pointer-events-none bg-white">
-          <div id="cert-export-container">
-            {students.filter(s => previewStudent?.id === s.id).map(s => (
-              <CertificateTemplate
-                key={s.id}
-                course={course!}
-                enrollment={s}
-                settings={settings}
-                representative={currentRepresentative}
-                templateId={previewMode}
-                templateBlob={customTemplateBlob}
-              />
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Print View — Participant List */}
       <div className="hidden print:block" style={{ fontFamily: 'sans-serif' }}>

@@ -79,8 +79,8 @@ jobs:
             # Recreate app container (migrations run in entrypoint)
             docker compose up -d --no-deps --pull always app
 
-            # Reload nginx in case config changed
-            docker compose exec -T nginx nginx -s reload || true
+            # Reload Caddy in case the Caddyfile changed (graceful, zero-downtime)
+            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
 
             # Prune unused images
             docker image prune -f
