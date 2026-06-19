@@ -72,11 +72,11 @@ jobs:
 
             cd /opt/andexcertify
 
-            # Pull latest image
+            # Authenticate to GHCR so compose can pull the private image.
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker pull ghcr.io/${{ github.repository }}:latest
 
-            # Recreate app container (migrations run in entrypoint)
+            # Recreate app container, pulling the latest image referenced in
+            # docker-compose.yml (lowercase ghcr path). Migrations run in entrypoint.
             docker compose up -d --no-deps --pull always app
 
             # Reload Caddy in case the Caddyfile changed (graceful, zero-downtime)
