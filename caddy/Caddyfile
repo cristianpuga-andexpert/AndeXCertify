@@ -25,6 +25,16 @@
 	}
 }
 
+# Object storage (MinIO) — a known host, so it gets a normal auto-issued cert
+# (not on-demand). Lets browser-facing pre-signed URLs reach MinIO.
+{$STORAGE_DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 60MB
+	}
+	reverse_proxy minio:9000
+}
+
 # Catch-all HTTPS site: serves every approved hostname through one config.
 https:// {
 	tls {

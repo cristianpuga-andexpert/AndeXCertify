@@ -540,17 +540,23 @@ async function startServer() {
 
   // ─── CORS ─────────────────────────────────────────────────────────────────
   app.use(cors({
-    origin: (origin, callback) => {
+    // Multi-tenant origins are dynamic: every OTEC is served from its own
+    // subdomain (<slug>.BASE_DOMAIN) or its own verified custom domain. Accept
+    // the base domain, any of its subdomains, verified custom domains, and any
+    // origin explicitly listed in ALLOWED_ORIGINS.
+    origin: async (origin, callback) => {
+      if (!origin) { callback(null, true); return; } // curl / server-to-server
       const allowed = (process.env.ALLOWED_ORIGINS || '')
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-      // Allow requests with no origin (curl, server-to-server) and whitelisted origins
-      if (!origin || allowed.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: origin '${origin}' not allowed`));
-      }
+        .split(',').map(s => s.trim()).filter(Boolean);
+      if (allowed.includes(origin)) { callback(null, true); return; }
+      try {
+        const host = new URL(origin).hostname.toLowerCase();
+        if (host === BASE_DOMAIN || host.endsWith(`.${BASE_DOMAIN}`)) {
+          callback(null, true); return;
+        }
+        if (await getTenantByVerifiedCustomDomain(host)) { callback(null, true); return; }
+      } catch { /* malformed origin → reject below */ }
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
     },
     credentials:    true,
     methods:        ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
