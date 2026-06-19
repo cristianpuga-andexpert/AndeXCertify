@@ -23,6 +23,23 @@ export function StudentList() {
     attendance: '' as any,
   });
 
+  // Generates and downloads a CSV template matching the "Agregar Alumno" fields.
+  // The leading BOM (﻿) makes Excel read accents (RUT/Nombre) correctly.
+  const downloadTemplate = () => {
+    const headers = ['Nombre', 'RUT', 'Evaluacion', 'Estado', 'Asistencia'];
+    const example = ['Juan Perez', '12.345.678-9', '6.5', 'Aprobado', '100'];
+    const csv = '﻿' + headers.join(',') + '\n' + example.join(',') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `plantilla-alumnos-${course?.nameReference || 'curso'}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const loadData = () => {
     if (!courseId || !user) return;
     Promise.all([
@@ -116,7 +133,7 @@ export function StudentList() {
         </div>
 
         <div className="flex items-center space-x-3">
-          <button className="btn-secondary flex items-center space-x-2">
+          <button onClick={downloadTemplate} className="btn-secondary flex items-center space-x-2">
             <Download className="h-4 w-4" />
             <span>Descargar Plantilla</span>
           </button>

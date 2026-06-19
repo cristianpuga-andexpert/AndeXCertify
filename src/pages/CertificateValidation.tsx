@@ -4,7 +4,7 @@ import { Enrollment, Course, OrganizationSettings, Representative } from '../typ
 import { CheckCircle2, Calendar, Download, Loader2, AlertCircle, XCircle, X, Terminal, Copy, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { formatRut } from '../lib/utils';
+import { formatRut, arrayBufferToBase64 } from '../lib/utils';
 import { motion } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -220,7 +220,7 @@ export function CertificateValidation() {
           const buf = await fileRes.arrayBuffer();
           templateBase64 =
             'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,' +
-            btoa(String.fromCharCode(...new Uint8Array(buf)));
+            arrayBufferToBase64(buf);
         }
       }
 

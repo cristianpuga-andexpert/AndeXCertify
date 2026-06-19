@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Enrollment, Course, OrganizationSettings, Representative, CertificateTemplate as ITemplate, EnrollmentStatus } from '../types';
 import { ArrowLeft, Download, UserCheck, Printer, Award, Loader2, AlertCircle, X, Terminal, Copy, Check } from 'lucide-react';
-import { cn, formatRut } from '../lib/utils';
+import { cn, formatRut, arrayBufferToBase64 } from '../lib/utils';
 import { useAuth } from '../lib/auth-context';
 import { format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
@@ -19,7 +19,7 @@ async function fetchTemplateBase64FromS3Key(s3Key: string): Promise<string> {
   if (!fileRes.ok) throw new Error('No se pudo descargar la plantilla');
   const buf = await fileRes.arrayBuffer();
   return 'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,' +
-    btoa(String.fromCharCode(...new Uint8Array(buf)));
+    arrayBufferToBase64(buf);
 }
 
 export function CertificateList() {
