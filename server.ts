@@ -17,9 +17,9 @@ import fs from "fs/promises";
 import crypto from "crypto";
 import os from "os";
 import { uploadFromBase64, deleteFile, getSignedUrl, isLocalStorage } from './src/lib/storage';
-import { and, eq, sql, isNotNull } from 'drizzle-orm';
+import { and, eq, sql, isNotNull, gte, desc } from 'drizzle-orm';
 import { db } from './src/db/index';
-import { tenantUsers, courses, enrollments } from './src/db/schema';
+import { tenantUsers, courses, enrollments, metricSamples } from './src/db/schema';
 import { requireAuth, requireSuperAdmin, requireTenantAdmin, AuthRequest } from './src/lib/auth-middleware';
 import {
   hashPassword, verifyPassword,
@@ -303,6 +303,32 @@ function imageMarkerRegex(marker: string): RegExp {
   const between = '(?:<[^>]*>|\\s)*';
   const pattern = ('{{' + marker + '}}').split('').map(escapeRe).join(between);
   return new RegExp(pattern, 'g');
+}
+
+// ─── Server health sampling (powers the superadmin metrics charts) ────────────
+async function readDiskUsedPct(): Promise<number> {
+  try {
+    const s: any = await (fs as any).statfs('/');
+    const total = s.blocks * s.bsize, free = s.bavail * s.bsize;
+    return total > 0 ? ((total - free) / total) * 100 : 0;
+  } catch { return 0; }
+}
+
+async function recordMetricSample(): Promise<void> {
+  try {
+    const memUsedPct = ((os.totalmem() - os.freemem()) / os.totalmem()) * 100;
+    await db.insert(metricSamples).values({
+      cpuLoad:     os.loadavg()[0],
+      cpuCount:    os.cpus().length,
+      memUsedPct,
+      diskUsedPct: await readDiskUsedPct(),
+    });
+    // Retention: keep ~30 days of samples.
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await db.delete(metricSamples).where(sql`${metricSamples.createdAt} < ${cutoff}`);
+  } catch (e: any) {
+    console.warn('[metrics] sample failed:', e?.message);
+  }
 }
 
 async function generateRenderedDocx(templateBase64: string, data: any, images: any, stampConfig: StampConfig): Promise<Buffer> {
@@ -1635,6 +1661,36 @@ async function startServer() {
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  /**
+   * GET /api/admin/metrics/history?hours=24 — time-series of server health
+   * samples for the dashboard charts. Down-samples to ~300 points max.
+   */
+  app.get('/api/admin/metrics/history', requireAuth, requireSuperAdmin, async (req, res) => {
+    try {
+      const hours = Math.min(Math.max(parseInt(String(req.query.hours || '24'), 10) || 24, 1), 24 * 30);
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const rows = await db.select()
+        .from(metricSamples)
+        .where(gte(metricSamples.createdAt, since))
+        .orderBy(desc(metricSamples.createdAt))
+        .limit(5000);
+      rows.reverse(); // chronological
+
+      // Down-sample so the chart payload stays small.
+      const MAX = 300;
+      const step = Math.max(1, Math.ceil(rows.length / MAX));
+      const sampled = rows.filter((_, i) => i % step === 0);
+
+      res.json(sampled.map(r => ({
+        t:    r.createdAt,
+        cpu:  r.cpuLoad,
+        cpuCount: r.cpuCount,
+        mem:  r.memUsedPct,
+        disk: r.diskUsedPct,
+      })));
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   app.delete('/api/admin/tenants/:id', requireAuth, requireSuperAdmin, async (req, res) => {
     try {
       const result = await setTenantActive(req.params.id, false);
@@ -1801,6 +1857,10 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => console.log(`Server running on http://localhost:${PORT}`));
+
+  // Sample server health every 2 minutes for the metrics charts (one now too).
+  void recordMetricSample();
+  setInterval(() => { void recordMetricSample(); }, 2 * 60 * 1000);
 }
 
 startServer();
