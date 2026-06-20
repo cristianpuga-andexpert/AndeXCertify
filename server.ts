@@ -439,6 +439,8 @@ async function generateRenderedDocx(templateBase64: string, data: any, images: a
     paragraphLoop: true,
     linebreaks: true,
     delimiters: { start: '{{', end: '}}' },
+    // Render missing/empty fields as blank instead of the literal "undefined".
+    nullGetter: () => '',
     modules: [new ImageModule(imageOptions)]
   });
 
