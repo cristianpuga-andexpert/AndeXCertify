@@ -36,6 +36,23 @@ export function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(binary);
 }
 
+/**
+ * Formats a date-only value (e.g. "2026-06-20" or an ISO timestamp) as
+ * "dd-MM-yyyy" WITHOUT timezone conversion. `new Date("2026-06-20")` parses as
+ * UTC midnight, which in Chile (UTC-4) shifts to the previous day — this reads
+ * the calendar date literally to avoid that off-by-one.
+ */
+export function formatDateDMY(value?: string | null): string {
+  if (!value) return '';
+  const s = String(value);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+}
+
 /** Generic API error handler — logs and rethrows with a descriptive message. */
 export function handleApiError(error: unknown, context: string): never {
   const message = error instanceof Error ? error.message : String(error);

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Enrollment, Course, OrganizationSettings, Representative, CertificateTemplate as ITemplate, EnrollmentStatus } from '../types';
 import { ArrowLeft, Download, UserCheck, Printer, Award, Loader2, AlertCircle, X, Terminal, Copy, Check } from 'lucide-react';
-import { cn, formatRut, arrayBufferToBase64 } from '../lib/utils';
+import { cn, formatRut, arrayBufferToBase64, formatDateDMY } from '../lib/utils';
 import { useAuth } from '../lib/auth-context';
 import { format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
@@ -173,14 +173,14 @@ export function CertificateList() {
           NOMBRE_ALUMNO: student.studentName,
           RUT_ALUMNO: formatRut(student.studentRut),
           HORAS: course.senceData?.horasActividad?.toString() || '0',
-          FECHA_INICIO: course.senceData?.fecInicio ? format(new Date(course.senceData.fecInicio), 'dd-MM-yyyy') : '',
-          FECH_INI: course.senceData?.fecInicio ? format(new Date(course.senceData.fecInicio), 'dd-MM-yyyy') : '',
-          FECHA_TERMINO: course.senceData?.fecTermino ? format(new Date(course.senceData.fecTermino), 'dd-MM-yyyy') : '',
-          FECH_TER: course.senceData?.fecTermino ? format(new Date(course.senceData.fecTermino), 'dd-MM-yyyy') : '',
-          FECHA_EMISION: course.senceData?.fecEmision ? format(new Date(course.senceData.fecEmision), 'dd-MM-yyyy') : format(new Date(), 'dd-MM-yyyy'),
-          FECH_EMI: course.senceData?.fecEmision ? format(new Date(course.senceData.fecEmision), 'dd-MM-yyyy') : format(new Date(), 'dd-MM-yyyy'),
-          FECHA_VENCIMIENTO: course.senceData?.fecVencimiento ? format(new Date(course.senceData.fecVencimiento), 'dd-MM-yyyy') : '',
-          FECH_VEN: course.senceData?.fecVencimiento ? format(new Date(course.senceData.fecVencimiento), 'dd-MM-yyyy') : '',
+          FECHA_INICIO: course.senceData?.fecInicio ? formatDateDMY(course.senceData.fecInicio) : '',
+          FECH_INI: course.senceData?.fecInicio ? formatDateDMY(course.senceData.fecInicio) : '',
+          FECHA_TERMINO: course.senceData?.fecTermino ? formatDateDMY(course.senceData.fecTermino) : '',
+          FECH_TER: course.senceData?.fecTermino ? formatDateDMY(course.senceData.fecTermino) : '',
+          FECHA_EMISION: course.senceData?.fecEmision ? formatDateDMY(course.senceData.fecEmision) : format(new Date(), 'dd-MM-yyyy'),
+          FECH_EMI: course.senceData?.fecEmision ? formatDateDMY(course.senceData.fecEmision) : format(new Date(), 'dd-MM-yyyy'),
+          FECHA_VENCIMIENTO: course.senceData?.fecVencimiento ? formatDateDMY(course.senceData.fecVencimiento) : '',
+          FECH_VEN: course.senceData?.fecVencimiento ? formatDateDMY(course.senceData.fecVencimiento) : '',
           CODIGO_SENCE: course.senceData?.codigoSence || '',
           RAZON_SOCIAL_EMPRESA: course.senceData?.empresa || '',
           RUT_EMPRESA: course.senceData?.rutEmpresa || '',
@@ -304,14 +304,14 @@ export function CertificateList() {
         NOMBRE_ALUMNO: student.studentName,
         RUT_ALUMNO: student.studentRut,
         HORAS: course!.senceData?.horasActividad?.toString() || '0',
-        FECHA_INICIO: course!.senceData?.fecInicio ? format(new Date(course!.senceData.fecInicio), 'dd-MM-yyyy') : '',
-        FECH_INI: course!.senceData?.fecInicio ? format(new Date(course!.senceData.fecInicio), 'dd-MM-yyyy') : '',
-        FECHA_TERMINO: course!.senceData?.fecTermino ? format(new Date(course!.senceData.fecTermino), 'dd-MM-yyyy') : '',
-        FECH_TER: course!.senceData?.fecTermino ? format(new Date(course!.senceData.fecTermino), 'dd-MM-yyyy') : '',
+        FECHA_INICIO: course!.senceData?.fecInicio ? formatDateDMY(course!.senceData.fecInicio) : '',
+        FECH_INI: course!.senceData?.fecInicio ? formatDateDMY(course!.senceData.fecInicio) : '',
+        FECHA_TERMINO: course!.senceData?.fecTermino ? formatDateDMY(course!.senceData.fecTermino) : '',
+        FECH_TER: course!.senceData?.fecTermino ? formatDateDMY(course!.senceData.fecTermino) : '',
         FECHA_EMISION: format(new Date(), 'dd-MM-yyyy'),
         FECH_EMI: format(new Date(), 'dd-MM-yyyy'),
-        FECHA_VENCIMIENTO: course!.senceData?.fecVencimiento ? format(new Date(course!.senceData.fecVencimiento), 'dd-MM-yyyy') : '',
-        FECH_VEN: course!.senceData?.fecVencimiento ? format(new Date(course!.senceData.fecVencimiento), 'dd-MM-yyyy') : '',
+        FECHA_VENCIMIENTO: course!.senceData?.fecVencimiento ? formatDateDMY(course!.senceData.fecVencimiento) : '',
+        FECH_VEN: course!.senceData?.fecVencimiento ? formatDateDMY(course!.senceData.fecVencimiento) : '',
         CODIGO_SENCE: course!.senceData?.codigoSence || '',
         EMPRESA_CLIENTE: course!.senceData?.empresa || '',
         RUT_EMPRESA_CLIENTE: course!.senceData?.rutEmpresa || '',
