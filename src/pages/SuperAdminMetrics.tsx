@@ -1,8 +1,83 @@
 import React, { useEffect, useState } from 'react';
 import { Cpu, MemoryStick, HardDrive, Clock, Building2, Users, BookOpen, GraduationCap, Award, RefreshCw } from 'lucide-react';
+import { format } from 'date-fns';
 import { api } from '../lib/api';
 import { cn } from '../lib/utils';
 import { AdminLayout, PlanBadge, Tenant } from './SuperAdmin';
+
+interface HistoryPoint { t: string; cpu: number; cpuCount: number; mem: number; disk: number; }
+
+const RANGES = [
+  { key: '12h', label: '12H', hours: 12 },
+  { key: '24h', label: '24H', hours: 24 },
+  { key: '7d',  label: '7D',  hours: 24 * 7 },
+  { key: '30d', label: '30D', hours: 24 * 30 },
+];
+
+/**
+ * Lightweight SVG area chart (no chart library). Plots a single series over
+ * time, with y gridlines/labels and a few x time labels.
+ */
+function AreaChart({ points, getValue, max, color, unit, hours }: {
+  points: HistoryPoint[];
+  getValue: (p: HistoryPoint) => number;
+  max: number;
+  color: string;
+  unit: string;
+  hours: number;
+}) {
+  const W = 720, H = 220, padL = 44, padR = 12, padT = 12, padB = 28;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const id = React.useId();
+
+  if (points.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[220px] text-[11px] text-slate-500">
+        Aún no hay datos para este período (se recolectan cada 2 min).
+      </div>
+    );
+  }
+
+  const n = points.length;
+  const x = (i: number) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+  const y = (v: number) => padT + innerH - (Math.min(v, max) / max) * innerH;
+
+  const linePts = points.map((p, i) => `${x(i)},${y(getValue(p))}`).join(' ');
+  const areaPath = `M ${x(0)},${padT + innerH} L ${linePts.split(' ').join(' L ')} L ${x(n - 1)},${padT + innerH} Z`;
+
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => ({ v: max * f, y: y(max * f) }));
+  const fmt = (iso: string) => format(new Date(iso), hours <= 24 ? 'HH:mm' : 'dd/MM');
+  const xLabelIdx = [0, Math.floor(n / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={`grad-${id}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      {/* gridlines + y labels */}
+      {yTicks.map((t, i) => (
+        <g key={i}>
+          <line x1={padL} y1={t.y} x2={W - padR} y2={t.y} stroke="currentColor" strokeOpacity="0.08" />
+          <text x={padL - 8} y={t.y + 3} textAnchor="end" fontSize="9" fill="currentColor" fillOpacity="0.4">
+            {t.v.toFixed(t.v < 10 ? 1 : 0)}{unit}
+          </text>
+        </g>
+      ))}
+      {/* area + line */}
+      <path d={areaPath} fill={`url(#grad-${id})`} />
+      <polyline points={linePts} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+      {/* x labels */}
+      {xLabelIdx.map(i => (
+        <text key={i} x={x(i)} y={H - 8} textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'} fontSize="9" fill="currentColor" fillOpacity="0.4">
+          {fmt(points[i].t)}
+        </text>
+      ))}
+    </svg>
+  );
+}
 
 interface Metrics {
   system: {
@@ -67,6 +142,9 @@ export function SuperAdminMetrics() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [range, setRange] = useState('24h');
+  const [history, setHistory] = useState<HistoryPoint[]>([]);
+
   const load = () => {
     setLoading(true);
     api.get<Metrics>('/api/admin/metrics')
@@ -75,6 +153,16 @@ export function SuperAdminMetrics() {
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+
+  useEffect(() => {
+    const hours = RANGES.find(r => r.key === range)?.hours ?? 24;
+    api.get<HistoryPoint[]>(`/api/admin/metrics/history?hours=${hours}`)
+      .then(setHistory)
+      .catch(() => setHistory([]));
+  }, [range]);
+
+  const rangeHours = RANGES.find(r => r.key === range)?.hours ?? 24;
+  const cpuMax = Math.max(data?.system.cpuCount ?? 1, ...history.map(h => h.cpu), 1);
 
   return (
     <AdminLayout title="Métricas y Rendimiento">
@@ -118,6 +206,43 @@ export function SuperAdminMetrics() {
                 value={uptimeStr(data.system.appUptime)}
                 sub={`Servidor: ${uptimeStr(data.system.hostUptime)}`}
               />
+            </div>
+          </section>
+
+          {/* ── Historical charts ── */}
+          <section>
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Historial</p>
+              <div className="flex items-center gap-1 bg-slate-900 light:bg-white border border-white/10 light:border-slate-200 rounded-lg p-1">
+                {RANGES.map(r => (
+                  <button
+                    key={r.key}
+                    onClick={() => setRange(r.key)}
+                    className={cn(
+                      'px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all',
+                      range === r.key ? 'bg-brand text-white' : 'text-slate-400 hover:text-white light:hover:text-slate-900'
+                    )}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-slate-900 light:bg-white border border-white/5 light:border-slate-200 light:shadow-sm rounded-2xl p-5 text-slate-400 light:text-slate-500">
+                <div className="flex items-center gap-2 mb-3">
+                  <Cpu className="h-4 w-4 text-brand" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">CPU · carga (vs {data.system.cpuCount} vCPU)</span>
+                </div>
+                <AreaChart points={history} getValue={p => p.cpu} max={cpuMax} color="#6366f1" unit="" hours={rangeHours} />
+              </div>
+              <div className="bg-slate-900 light:bg-white border border-white/5 light:border-slate-200 light:shadow-sm rounded-2xl p-5 text-slate-400 light:text-slate-500">
+                <div className="flex items-center gap-2 mb-3">
+                  <MemoryStick className="h-4 w-4 text-emerald-400" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Memoria · % uso</span>
+                </div>
+                <AreaChart points={history} getValue={p => p.mem} max={100} color="#10b981" unit="%" hours={rangeHours} />
+              </div>
             </div>
           </section>
 

@@ -5,10 +5,22 @@ import {
   text,
   boolean,
   integer,
+  real,
   timestamp,
   jsonb,
   primaryKey,
 } from 'drizzle-orm/pg-core';
+
+// ─── metric_samples (server health time-series for the superadmin dashboard) ──
+export const metricSamples = pgTable('metric_samples', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  cpuLoad:     real('cpu_load').notNull(),       // 1-minute load average
+  cpuCount:    integer('cpu_count').notNull(),
+  memUsedPct:  real('mem_used_pct').notNull(),   // 0-100
+  diskUsedPct: real('disk_used_pct').notNull(),  // 0-100
+});
+export type MetricSampleRow = typeof metricSamples.$inferSelect;
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
