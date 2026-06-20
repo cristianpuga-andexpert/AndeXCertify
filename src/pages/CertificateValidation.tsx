@@ -4,7 +4,7 @@ import { Enrollment, Course, OrganizationSettings, Representative } from '../typ
 import { CheckCircle2, Calendar, Download, Loader2, AlertCircle, XCircle, X, Terminal, Copy, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { formatRut, arrayBufferToBase64 } from '../lib/utils';
+import { formatRut, arrayBufferToBase64, formatDateDMY } from '../lib/utils';
 import { motion } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -150,10 +150,10 @@ export function CertificateValidation() {
         NOMBRE_ALUMNO: enrollment.studentName,
         RUT_ALUMNO: formatRut(enrollment.studentRut),
         HORAS: course.senceData?.horasActividad?.toString() || '0',
-        FECHA_INICIO: course.senceData?.fecInicio ? format(new Date(course.senceData.fecInicio), 'dd-MM-yyyy') : '',
-        FECHA_TERMINO: course.senceData?.fecTermino ? format(new Date(course.senceData.fecTermino), 'dd-MM-yyyy') : '',
-        FECHA_EMISION: course.senceData?.fecEmision ? format(new Date(course.senceData.fecEmision), 'dd-MM-yyyy') : format(new Date(), 'dd-MM-yyyy'),
-        FECHA_VENCIMIENTO: course.senceData?.fecVencimiento ? format(new Date(course.senceData.fecVencimiento), 'dd-MM-yyyy') : '',
+        FECHA_INICIO: course.senceData?.fecInicio ? formatDateDMY(course.senceData.fecInicio) : '',
+        FECHA_TERMINO: course.senceData?.fecTermino ? formatDateDMY(course.senceData.fecTermino) : '',
+        FECHA_EMISION: course.senceData?.fecEmision ? formatDateDMY(course.senceData.fecEmision) : format(new Date(), 'dd-MM-yyyy'),
+        FECHA_VENCIMIENTO: course.senceData?.fecVencimiento ? formatDateDMY(course.senceData.fecVencimiento) : '',
         CODIGO_SENCE: course.senceData?.codigoSence || '',
         RAZON_SOCIAL_EMPRESA: course.senceData?.empresa || '',
         RUT_EMPRESA: course.senceData?.rutEmpresa || '',
