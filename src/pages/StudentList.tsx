@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Enrollment, EnrollmentStatus, Course } from '../types';
 import { ArrowLeft, UserPlus, FileSpreadsheet, Download, Edit2, Trash2, Search } from 'lucide-react';
 import { formatRut, cn } from '../lib/utils';
-import { buildXlsxBlob } from '../lib/xlsx';
+import { buildXlsxBlob, parseSpreadsheet } from '../lib/xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
@@ -39,6 +39,75 @@ export function StudentList() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+
+  // Maps the "Estado" column text to a valid EnrollmentStatus (lenient).
+  const mapStatus = (raw: string): EnrollmentStatus => {
+    const s = (raw || '').trim().toLowerCase();
+    if (s.startsWith('rechaz')) return EnrollmentStatus.RECHAZADO;
+    if (s.includes('observ')) return EnrollmentStatus.APROBADO_OBSERVACION;
+    return EnrollmentStatus.APROBADO;
+  };
+
+  // Imports students from an uploaded .xlsx (or .csv) file matching the template.
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = ''; // allow re-selecting the same file
+    if (!file || !courseId) return;
+
+    setImporting(true);
+    try {
+      const rows = await parseSpreadsheet(file);
+      if (rows.length < 2) { alert('El archivo no tiene filas de datos.'); return; }
+
+      const header = rows[0].map(h => (h || '').toString().trim().toLowerCase());
+      const find = (...keys: string[]) => header.findIndex(h => keys.some(k => h.includes(k)));
+      const col = {
+        name: find('nombre'),
+        rut: find('rut'),
+        evaluation: find('evalua'),
+        status: find('estado'),
+        attendance: find('asist'),
+      };
+      if (col.name === -1 || col.rut === -1) {
+        alert('No se encontraron las columnas "Nombre" y "RUT". Usa la plantilla descargable.');
+        return;
+      }
+
+      const dataRows = rows.slice(1).filter(r =>
+        ((r[col.name] || '').trim()) || ((r[col.rut] || '').trim())
+      );
+
+      let ok = 0, fail = 0;
+      for (const r of dataRows) {
+        const studentName = (r[col.name] || '').trim();
+        const studentRut = (r[col.rut] || '').trim();
+        if (!studentName || !studentRut) { fail++; continue; }
+        try {
+          const created = await api.post<Enrollment>('/api/enrollments', {
+            courseId,
+            studentName,
+            studentRut,
+            evaluation: col.evaluation >= 0 ? (r[col.evaluation] || '').trim() : '',
+            status: mapStatus(col.status >= 0 ? r[col.status] : ''),
+            attendance: col.attendance >= 0
+              ? (Number(String(r[col.attendance]).replace(/[^\d.]/g, '')) || 0)
+              : 0,
+            enrollmentDate: new Date().toISOString(),
+          });
+          setStudents(prev => [...prev, created]);
+          ok++;
+        } catch { fail++; }
+      }
+      alert(`Importación finalizada: ${ok} alumno(s) agregado(s)${fail ? `, ${fail} omitido(s)` : ''}.`);
+    } catch (err: any) {
+      alert('Error al importar el archivo: ' + (err?.message || err));
+    } finally {
+      setImporting(false);
+    }
   };
 
   const loadData = () => {
@@ -138,9 +207,20 @@ export function StudentList() {
             <Download className="h-4 w-4" />
             <span>Descargar Plantilla</span>
           </button>
-          <button className="btn-secondary flex items-center space-x-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.csv"
+            onChange={handleImportFile}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            className="btn-secondary flex items-center space-x-2 disabled:opacity-60"
+          >
             <FileSpreadsheet className="h-4 w-4" />
-            <span>Importar CSV</span>
+            <span>{importing ? 'Importando…' : 'Importar XLSX'}</span>
           </button>
           <button
             onClick={() => setIsModalOpen(true)}

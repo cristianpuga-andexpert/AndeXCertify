@@ -74,3 +74,87 @@ export async function buildXlsxBlob(rows: (string | number)[][]): Promise<Blob> 
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
 }
+
+// ─── Reading ──────────────────────────────────────────────────────────────────
+
+function unescapeXml(s: string): string {
+  return s
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function colToIndex(ref: string): number {
+  let n = 0;
+  for (const ch of ref) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/** Parses the first sheet of an .xlsx file into a 2D array of strings. */
+async function parseXlsx(buf: ArrayBuffer): Promise<string[][]> {
+  const zip = await JSZip.loadAsync(buf);
+
+  // Shared strings (Excel stores most text here, referenced by index)
+  let shared: string[] = [];
+  const ssFile = zip.file('xl/sharedStrings.xml');
+  if (ssFile) {
+    const txt = await ssFile.async('string');
+    shared = [...txt.matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m =>
+      unescapeXml([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => t[1]).join(''))
+    );
+  }
+
+  const sheetFile = zip.file(/xl\/worksheets\/sheet1\.xml/)[0] || zip.file(/xl\/worksheets\/.*\.xml/)[0];
+  if (!sheetFile) return [];
+  const sheetXml = await sheetFile.async('string');
+
+  const rows: string[][] = [];
+  for (const rm of sheetXml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+    const cells: string[] = [];
+    for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const attrs = cm[1] || '';
+      const inner = cm[2] || '';
+      const ref = (attrs.match(/r="([A-Z]+)\d+"/) || [])[1];
+      const colIdx = ref ? colToIndex(ref) : cells.length;
+      const t = (attrs.match(/t="([^"]+)"/) || [])[1];
+      let val = '';
+      if (t === 's') {
+        val = shared[parseInt((inner.match(/<v>([\s\S]*?)<\/v>/) || [])[1] || '-1', 10)] ?? '';
+      } else if (t === 'inlineStr') {
+        val = unescapeXml([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(x => x[1]).join(''));
+      } else {
+        val = unescapeXml((inner.match(/<v>([\s\S]*?)<\/v>/) || [])[1] || '');
+      }
+      cells[colIdx] = val;
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+/** Parses a CSV string into a 2D array (handles quoted fields and ; or , separators). */
+function parseCsv(text: string): string[][] {
+  const clean = text.replace(/^﻿/, '');
+  const sep = (clean.split('\n')[0].match(/;/g) || []).length > (clean.split('\n')[0].match(/,/g) || []).length ? ';' : ',';
+  const rows: string[][] = [];
+  let row: string[] = [], cur = '', inQ = false;
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (inQ) {
+      if (c === '"' && clean[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') inQ = false;
+      else cur += c;
+    } else if (c === '"') inQ = true;
+    else if (c === sep) { row.push(cur); cur = ''; }
+    else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (c !== '\r') cur += c;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+
+/** Parses an uploaded .xlsx or .csv file into rows. */
+export async function parseSpreadsheet(file: File): Promise<string[][]> {
+  if (/\.csv$/i.test(file.name)) return parseCsv(await file.text());
+  return parseXlsx(await file.arrayBuffer());
+}
