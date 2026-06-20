@@ -224,11 +224,14 @@ export function CertificateValidation() {
         }
       }
 
-      const endpoint = asPdf ? '/api/generate-certificate-pdf' : '/api/generate-certificate';
+      // Public validation page → public (unauthenticated) generation endpoints,
+      // gated server-side by the enrollmentId.
+      const endpoint = asPdf ? '/api/public/generate-certificate-pdf' : '/api/public/generate-certificate';
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          enrollmentId: enrollment.id,
           templateBase64,
           data: markerData,
           images,
@@ -312,7 +315,7 @@ export function CertificateValidation() {
         {/* ── Logo / org header ── */}
         <div className="text-center mb-8">
           {settings?.logoUrl ? (
-            <img src={settings.logoUrl} alt="Logo" className="h-16 mx-auto mb-3 object-contain" />
+            <img src={settings.logoUrl} alt="Logo" className="h-28 mx-auto mb-4 object-contain" />
           ) : (
             <p className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">{settings?.name || ''}</p>
           )}
