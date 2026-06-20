@@ -22,6 +22,7 @@ import { Sidebar } from './components/Sidebar';
 import { SuperAdmin } from './pages/SuperAdmin';
 import { SuperAdminTenants } from './pages/SuperAdminTenants';
 import { SuperAdminNewTenant } from './pages/SuperAdminNewTenant';
+import { SuperAdminMetrics } from './pages/SuperAdminMetrics';
 import { api } from './lib/api';
 import { OrganizationSettings } from './types';
 import { applyBrandColor, DEFAULT_BRAND_COLOR } from './lib/colorUtils';
@@ -73,6 +74,13 @@ function AppContent() {
         <Route path="/superadmin/tenants/new" element={
           user ? (
             <SuperAdminGuard><SuperAdminNewTenant /></SuperAdminGuard>
+          ) : (
+            <LoginView />
+          )
+        } />
+        <Route path="/superadmin/metrics" element={
+          user ? (
+            <SuperAdminGuard><SuperAdminMetrics /></SuperAdminGuard>
           ) : (
             <LoginView />
           )
