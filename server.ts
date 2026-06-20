@@ -292,6 +292,19 @@ async function compositeSignatureWithStamp(
   return canvas.toBuffer('image/png') as unknown as Buffer;
 }
 
+/**
+ * Builds a regex that matches an image marker `{{MARKER}}` even when Word has
+ * split it across multiple runs (e.g. `{{` and `}}` in separate <w:r> from the
+ * marker text). It tolerates XML tags / whitespace between every character.
+ * Without this, the literal {{FIRMA}}/{{QR}} survive and render as plain text.
+ */
+function imageMarkerRegex(marker: string): RegExp {
+  const escapeRe = (c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const between = '(?:<[^>]*>|\\s)*';
+  const pattern = ('{{' + marker + '}}').split('').map(escapeRe).join(between);
+  return new RegExp(pattern, 'g');
+}
+
 async function generateRenderedDocx(templateBase64: string, data: any, images: any, stampConfig: StampConfig): Promise<Buffer> {
   const base64Data = templateBase64.includes(',')
     ? templateBase64.split(',')[1]
@@ -333,8 +346,9 @@ async function generateRenderedDocx(templateBase64: string, data: any, images: a
       const xmlContent = zip.files[fileName].asText();
       const markers = ['QR', 'FIRMA_OTEC', 'FIRMA', 'TIMBRE'];
       markers.forEach(marker => {
-        const markerIdx = xmlContent.indexOf('{{' + marker + '}}');
-        if (markerIdx === -1) return;
+        const markerMatch = imageMarkerRegex(marker).exec(xmlContent);
+        if (!markerMatch) return;
+        const markerIdx = markerMatch.index;
         const txbxStart = xmlContent.lastIndexOf('<w:txbxContent>', markerIdx);
         if (txbxStart === -1) return;
         const chunkBefore = xmlContent.substring(0, txbxStart);
@@ -389,8 +403,8 @@ async function generateRenderedDocx(templateBase64: string, data: any, images: a
     if (fileName.endsWith('.xml')) {
       let xmlContent = zip.files[fileName].asText();
       ['QR', 'FIRMA_OTEC', 'FIRMA', 'TIMBRE'].forEach(tag => {
-        const regex = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'g');
-        xmlContent = xmlContent.replace(regex, imageTagsWithData.includes(tag) ? `{{%${tag}}}` : '');
+        // Tolerant of run-split markers (Word breaks {{TAG}} across <w:r>).
+        xmlContent = xmlContent.replace(imageMarkerRegex(tag), imageTagsWithData.includes(tag) ? `{{%${tag}}}` : '');
       });
       zip.file(fileName, xmlContent);
     }
