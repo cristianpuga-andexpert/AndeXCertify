@@ -267,10 +267,10 @@ async function compositeSignatureWithStamp(
   if (style === 'circular_horizontal') {
     ctx.font = 'bold 18px Arial, sans-serif';
     ctx.fillText('FIRMA', cx, cy - 30);
-    ctx.font = '14px Arial, sans-serif';
+    ctx.font = '18px Arial, sans-serif'; // RUT +30% (14 → 18)
     ctx.fillText(cfg.orgRut || '', cx, cy + 30);
   } else {
-    ctx.font = 'bold 16px Arial, sans-serif';
+    ctx.font = 'bold 21px Arial, sans-serif'; // RUT +30% (16 → 21)
     ctx.fillText(cfg.orgRut || 'RUT INSTITUCIONAL', cx, cy + (style === 'square' ? 30 : 0));
   }
 
