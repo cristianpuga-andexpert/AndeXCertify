@@ -284,7 +284,7 @@ async function compositeSignatureWithStamp(
     const sigImg = await loadImage(sigBuffer);
     
     // Fit signature within the stamp area, with some padding and offset
-    const sigW = 320;
+    const sigW = 384; // +20% (320 → 384)
     const sigH = sigW / (sigImg.width / sigImg.height);
     ctx.drawImage(sigImg, cx - sigW / 2, cy - sigH / 2, sigW, sigH);
   }
