@@ -60,27 +60,44 @@ jobs:
     environment: production
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          script: |
-            set -euo pipefail
+      # Plain ssh with a retry loop. The runner→VPS path occasionally times out
+      # (transient network, not a VPS firewall — verified open), so we retry.
+      - name: Deploy via SSH (with retries)
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || 22 }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$VPS_SSH_KEY" > deploy_key
+          chmod 600 deploy_key
 
-            cd /opt/andexcertify
+          # Build the remote script (token/user expanded into it on the runner).
+          cat > remote.sh <<REMOTE
+          set -euo pipefail
+          cd /opt/andexcertify
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker compose up -d --no-deps --pull always app
+          docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+          docker image prune -f
+          REMOTE
 
-            # Authenticate to GHCR so compose can pull the private image.
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # Recreate app container, pulling the latest image referenced in
-            # docker-compose.yml (lowercase ghcr path). Migrations run in entrypoint.
-            docker compose up -d --no-deps --pull always app
-
-            # Reload Caddy in case the Caddyfile changed (graceful, zero-downtime)
-            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
-
-            # Prune unused images
-            docker image prune -f
+          for attempt in 1 2 3 4 5; do
+            echo "::group::Deploy attempt $attempt"
+            if ssh -i deploy_key -p "$VPS_PORT" \
+                 -o ConnectTimeout=40 -o ServerAliveInterval=10 \
+                 -o StrictHostKeyChecking=accept-new \
+                 "$VPS_USER@$VPS_HOST" 'bash -s' < remote.sh; then
+              echo "::endgroup::"
+              echo "✅ Deploy succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "⚠️ Attempt $attempt failed; retrying in 20s…"
+            sleep 20
+          done
+          echo "❌ All deploy attempts failed"
+          exit 1
