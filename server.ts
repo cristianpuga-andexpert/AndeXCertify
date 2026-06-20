@@ -17,9 +17,9 @@ import fs from "fs/promises";
 import crypto from "crypto";
 import os from "os";
 import { uploadFromBase64, deleteFile, getSignedUrl, isLocalStorage } from './src/lib/storage';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql, isNotNull } from 'drizzle-orm';
 import { db } from './src/db/index';
-import { tenantUsers } from './src/db/schema';
+import { tenantUsers, courses, enrollments } from './src/db/schema';
 import { requireAuth, requireSuperAdmin, requireTenantAdmin, AuthRequest } from './src/lib/auth-middleware';
 import {
   hashPassword, verifyPassword,
@@ -1582,6 +1582,56 @@ async function startServer() {
     try {
       const counts = await getTenantUserCounts();
       res.json(counts);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  /**
+   * GET /api/admin/metrics — superadmin dashboard data:
+   * server health (CPU/RAM/disk/uptime) + per-tenant usage counts.
+   */
+  app.get('/api/admin/metrics', requireAuth, requireSuperAdmin, async (_req, res) => {
+    try {
+      // ── Server health ──────────────────────────────────────────────────────
+      let diskTotal = 0, diskFree = 0;
+      try { const s: any = await (fs as any).statfs('/'); diskTotal = s.blocks * s.bsize; diskFree = s.bavail * s.bsize; } catch { /* statfs unsupported */ }
+      const system = {
+        loadavg:    os.loadavg(),          // [1m, 5m, 15m]
+        cpuCount:   os.cpus().length,
+        memTotal:   os.totalmem(),
+        memFree:    os.freemem(),
+        diskTotal,
+        diskFree,
+        hostUptime: os.uptime(),           // seconds
+        appUptime:  process.uptime(),      // seconds
+      };
+
+      // ── Per-tenant usage (grouped aggregates) ──────────────────────────────
+      const [tenantsList, userCounts, courseRows, enrollRows, certRows] = await Promise.all([
+        listAllTenants(),
+        getTenantUserCounts(),
+        db.select({ t: courses.tenantId,     c: sql<number>`cast(count(*) as integer)` }).from(courses).groupBy(courses.tenantId),
+        db.select({ t: enrollments.tenantId, c: sql<number>`cast(count(*) as integer)` }).from(enrollments).groupBy(enrollments.tenantId),
+        db.select({ t: enrollments.tenantId, c: sql<number>`cast(count(*) as integer)` }).from(enrollments).where(isNotNull(enrollments.certificateGeneratedAt)).groupBy(enrollments.tenantId),
+      ]);
+      const toMap = (rows: { t: string; c: number }[]) => Object.fromEntries(rows.map(r => [r.t, r.c]));
+      const cMap = toMap(courseRows), eMap = toMap(enrollRows), certMap = toMap(certRows);
+
+      const tenants = tenantsList.map(t => ({
+        id: t.id, name: t.name, plan: t.plan, active: t.active,
+        users:        userCounts[t.id] || 0,
+        courses:      cMap[t.id] || 0,
+        enrollments:  eMap[t.id] || 0,
+        certificates: certMap[t.id] || 0,
+      }));
+      const totals = {
+        tenants:      tenants.length,
+        users:        Object.values(userCounts).reduce((a, b) => a + b, 0),
+        courses:      tenants.reduce((a, t) => a + t.courses, 0),
+        enrollments:  tenants.reduce((a, t) => a + t.enrollments, 0),
+        certificates: tenants.reduce((a, t) => a + t.certificates, 0),
+      };
+
+      res.json({ system, totals, tenants });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

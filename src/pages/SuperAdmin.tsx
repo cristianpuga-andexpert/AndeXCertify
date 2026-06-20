@@ -3,7 +3,7 @@ import { Link, NavLink, useNavigate } from 'react-router-dom';
 import {
   Building2, Users, TrendingUp, ShieldCheck, Award,
   Plus, ArrowRight, Activity, LayoutDashboard, LogOut, ChevronRight,
-  Sun, Moon, Settings,
+  Sun, Moon, Settings, BarChart3,
 } from 'lucide-react';
 import logoLight from '../assets/logo-light.png';
 import logoDark  from '../assets/logo-dark.png';
@@ -113,6 +113,18 @@ export function AdminLayout({ children, title }: { children: React.ReactNode; ti
             >
               <Plus className="h-3.5 w-3.5" />
               Nuevo OTEC
+            </NavLink>
+            <NavLink
+              to="/superadmin/metrics"
+              className={({ isActive }) => cn(
+                'flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all',
+                isActive
+                  ? 'bg-brand text-white shadow-lg shadow-brand/20'
+                  : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900 hover:bg-white/5 light:hover:bg-slate-100'
+              )}
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+              Métricas
             </NavLink>
             <NavLink
               to="/superadmin/settings"
