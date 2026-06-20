@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Enrollment, EnrollmentStatus, Course } from '../types';
 import { ArrowLeft, UserPlus, FileSpreadsheet, Download, Edit2, Trash2, Search } from 'lucide-react';
 import { formatRut, cn } from '../lib/utils';
+import { buildXlsxBlob } from '../lib/xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
@@ -23,17 +24,17 @@ export function StudentList() {
     attendance: '' as any,
   });
 
-  // Generates and downloads a CSV template matching the "Agregar Alumno" fields.
-  // The leading BOM (﻿) makes Excel read accents (RUT/Nombre) correctly.
-  const downloadTemplate = () => {
-    const headers = ['Nombre', 'RUT', 'Evaluacion', 'Estado', 'Asistencia'];
-    const example = ['Juan Perez', '12.345.678-9', '6.5', 'Aprobado', '100'];
-    const csv = '﻿' + headers.join(',') + '\n' + example.join(',') + '\n';
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  // Generates and downloads an XLSX template matching the "Agregar Alumno" fields.
+  const downloadTemplate = async () => {
+    const rows: string[][] = [
+      ['Nombre', 'RUT', 'Evaluacion', 'Estado', 'Asistencia'],
+      ['Juan Pérez', '12.345.678-9', '6.5', 'Aprobado', '100'],
+    ];
+    const blob = await buildXlsxBlob(rows);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `plantilla-alumnos-${course?.nameReference || 'curso'}.csv`;
+    a.download = `plantilla-alumnos-${course?.nameReference || 'curso'}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

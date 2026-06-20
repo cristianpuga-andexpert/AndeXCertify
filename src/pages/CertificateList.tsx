@@ -60,27 +60,35 @@ export function CertificateList() {
         // Determine preview mode
         if (c.templateId && !BUILT_IN_TEMPLATES.includes(c.templateId)) {
           setPreviewMode('custom');
-          // Load custom template from S3
-          const templates = await api.get<ITemplate[]>('/api/templates');
-          const tpl = templates.find(t => t.id === c.templateId);
-          if (tpl) {
-            setCustomTemplateName(tpl.name);
-            setCustomTemplateS3Key(tpl.fileData); // fileData = S3 key
-
-            const base64 = await fetchTemplateBase64FromS3Key(tpl.fileData);
-            const base64Data = base64.split(',')[1];
-            const binaryString = atob(base64Data);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-            setCustomTemplateBlob(bytes.buffer);
-          }
+          // Load the custom DOCX template in the BACKGROUND — it can weigh
+          // hundreds of KB and is only needed for preview/generation, not to
+          // show the participant list. Blocking on it made the page slow.
+          void loadCustomTemplate(c.templateId);
         } else {
           setPreviewMode(c.templateId || 'modern');
         }
       } catch (err) {
         console.error('Error loading certificate data:', err);
       } finally {
-        setLoading(false);
+        setLoading(false); // page is usable as soon as core data is in
+      }
+    };
+
+    const loadCustomTemplate = async (templateId: string) => {
+      try {
+        const tpl = await api.get<ITemplate>(`/api/templates/${templateId}`);
+        if (!tpl) return;
+        setCustomTemplateName(tpl.name);
+        setCustomTemplateS3Key(tpl.fileData); // fileData = S3 key
+
+        const base64 = await fetchTemplateBase64FromS3Key(tpl.fileData);
+        const base64Data = base64.split(',')[1];
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+        setCustomTemplateBlob(bytes.buffer);
+      } catch (err) {
+        console.error('Error loading custom template:', err);
       }
     };
 
