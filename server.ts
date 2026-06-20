@@ -1136,6 +1136,59 @@ async function startServer() {
     }
   });
 
+  // ─── Public certificate generation (used by the public validation page) ────
+  // No auth (the validation page is public), but rate-limited and gated by a
+  // real enrollmentId so it can't be abused as a free DOCX→PDF converter.
+  async function ensureRealEnrollment(req: express.Request, res: express.Response): Promise<boolean> {
+    const { enrollmentId } = req.body as { enrollmentId?: string };
+    if (!enrollmentId || !(await getEnrollmentById(enrollmentId))) {
+      res.status(404).json({ error: 'Certificado no encontrado' });
+      return false;
+    }
+    return true;
+  }
+
+  app.post("/api/public/generate-certificate-pdf", authLimiter, express.json({ limit: '50mb' }), async (req, res) => {
+    try {
+      if (!(await ensureRealEnrollment(req, res))) return;
+      const { templateBase64, templateS3Key, data, images, stampConfig } = req.body;
+      const cfg: StampConfig = stampConfig || {
+        useCustomStamp: false, customStampName: '', lema: '',
+        orgName: (data as Record<string, string>).EMPRESA_OTEC || 'OTEC',
+        orgRut: (data as Record<string, string>).RUT_EMPRESA_OTEC || '',
+      };
+      const resolvedBase64 = await resolveTemplateBase64(templateBase64, templateS3Key);
+      const docxBuf = await generateRenderedDocx(resolvedBase64, data, images, cfg);
+      const pdfBuf = await convertDocxToPdf(docxBuf);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename=certificate.pdf');
+      res.send(pdfBuf);
+    } catch (err: any) {
+      console.error("Public PDF Error:", err);
+      res.status(500).json({ error: "PDF conversion failed" });
+    }
+  });
+
+  app.post("/api/public/generate-certificate", authLimiter, express.json({ limit: '50mb' }), async (req, res) => {
+    try {
+      if (!(await ensureRealEnrollment(req, res))) return;
+      const { templateBase64, templateS3Key, data, images, stampConfig } = req.body;
+      const cfg: StampConfig = stampConfig || {
+        useCustomStamp: false, customStampName: '', lema: '',
+        orgName: (data as Record<string, string>).EMPRESA_OTEC || 'OTEC',
+        orgRut: (data as Record<string, string>).RUT_EMPRESA_OTEC || '',
+      };
+      const resolvedBase64 = await resolveTemplateBase64(templateBase64, templateS3Key);
+      const out = await generateRenderedDocx(resolvedBase64, data, images, cfg);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', 'attachment; filename=certificate.docx');
+      res.send(out);
+    } catch (err: any) {
+      console.error("Public DOCX Error:", err);
+      res.status(500).json({ error: "Generation failed" });
+    }
+  });
+
   // ─── Template S3 endpoints ────────────────────────────────────────────────
 
   /**
