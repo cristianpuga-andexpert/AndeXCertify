@@ -1,4 +1,7 @@
-name: Build & Deploy
+# Build-only pipeline. Deployment is PULL-based: the VPS runs a systemd timer
+# (andex-autodeploy.timer, every 2 min) that pulls the new image from GHCR and
+# recreates the app container. This avoids the unreliable inbound-SSH path.
+name: Build & Push
 
 on:
   push:
@@ -52,52 +55,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to VPS via SSH
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      # Plain ssh with a retry loop. The runner→VPS path occasionally times out
-      # (transient network, not a VPS firewall — verified open), so we retry.
-      - name: Deploy via SSH (with retries)
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PORT: ${{ secrets.VPS_PORT || 22 }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s\n' "$VPS_SSH_KEY" > deploy_key
-          chmod 600 deploy_key
-
-          # Build the remote script (token/user expanded into it on the runner).
-          cat > remote.sh <<REMOTE
-          set -euo pipefail
-          cd /opt/andexcertify
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-          docker compose up -d --no-deps --pull always app
-          docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
-          docker image prune -f
-          REMOTE
-
-          for attempt in 1 2 3 4 5; do
-            echo "::group::Deploy attempt $attempt"
-            if ssh -i deploy_key -p "$VPS_PORT" \
-                 -o ConnectTimeout=40 -o ServerAliveInterval=10 \
-                 -o StrictHostKeyChecking=accept-new \
-                 "$VPS_USER@$VPS_HOST" 'bash -s' < remote.sh; then
-              echo "::endgroup::"
-              echo "✅ Deploy succeeded on attempt $attempt"
-              exit 0
-            fi
-            echo "::endgroup::"
-            echo "⚠️ Attempt $attempt failed; retrying in 20s…"
-            sleep 20
-          done
-          echo "❌ All deploy attempts failed"
-          exit 1
+          # Deployment happens VPS-side via the andex-autodeploy systemd timer
+          # (pull-based), so there is no SSH deploy job here.
